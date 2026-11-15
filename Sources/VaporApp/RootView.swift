@@ -169,6 +169,7 @@ struct RootView: View {
     @ObservedObject var store: LibraryStore
     @ObservedObject var engine: EngineModel
     @State private var rescan: Task<Void, Never>?
+    @StateObject private var onboarding = OnboardingModel()
 
     init(state: AppState) {
         self.state = state
@@ -177,6 +178,20 @@ struct RootView: View {
     }
 
     var body: some View {
+        if engine.steam == nil {
+            // No Windows Steam on this Mac yet: set one up, then the sign-in screen takes over.
+            OnboardingView(model: onboarding) { engine.adoptSetup() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.background)
+                .ignoresSafeArea()
+                .preferredColorScheme(.dark)
+                .tint(Theme.accent)
+        } else {
+            main
+        }
+    }
+
+    private var main: some View {
         HStack(spacing: 0) {
             Sidebar(state: state, store: store)
                 .frame(width: 216)
