@@ -202,6 +202,7 @@ public final class WindowsSteam: @unchecked Sendable {
     public func start(silent: Bool = true, allowNativeConflict: Bool = false) throws {
         if !allowNativeConflict && Self.nativeSteamRunning { throw StartError.nativeSteamRunning }
         if isRunning { return }
+        suppressCrashDialogs()
         launch = (Date(), silent)
         var args = [steamRoot.appendingPathComponent("steam.exe").path, "-no-cef-sandbox",
                     "-devtools-port", String(SteamUI.port)]
@@ -222,6 +223,19 @@ public final class WindowsSteam: @unchecked Sendable {
                           FileManager.default.homeDirectoryForCurrentUser
                               .appendingPathComponent("Library/Application Support/Vapor/lib/libvapor-steamhide.dylib")]
         return candidates.compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// Steam's web helper recovers from a crashed process by itself, but Wine would put up its "program
+    /// error" dialog for every crash first. Written once per prefix, before anything runs in it.
+    func suppressCrashDialogs() {
+        let reg = prefix.appendingPathComponent("user.reg")
+        if let text = try? String(contentsOf: reg, encoding: .utf8),
+           let section = text.range(of: "[Software\\\\Wine\\\\WineDbg]"),
+           text[section.upperBound...].prefix(400).contains("\"ShowCrashDialog\"=dword:00000000") { return }
+        guard let p = try? spawn(["reg", "add", "HKCU\\Software\\Wine\\WineDbg", "/v", "ShowCrashDialog",
+                                  "/t", "REG_DWORD", "/d", "0", "/f"]) else { return }
+        let deadline = Date().addingTimeInterval(30)
+        while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
     }
 
     /// When and how the client was last started by this process.

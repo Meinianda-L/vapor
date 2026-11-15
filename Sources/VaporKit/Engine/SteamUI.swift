@@ -556,6 +556,7 @@ public final class SteamUI: @unchecked Sendable {
         public let shaderPrecache: Bool
         public let peerContent: Int
         public let cloudEnabled: Bool
+        public let overlayEnabled: Bool     // enable_overlay: the in-game Steam overlay (Shift+Tab)
         public let language: String
         public let languages: [String]
         public let folders: [Folder]
@@ -614,7 +615,7 @@ public final class SteamUI: @unchecked Sendable {
 
     // MARK: - Agent
 
-    static let agentVersion = 14
+    static let agentVersion = 15
 
     /// Replaces the agent only when it is another version and idle: every client shares one agent, and an
     /// install or probe in flight must keep the agent that is driving it.
@@ -1216,13 +1217,14 @@ public final class SteamUI: @unchecked Sendable {
             throttleKbps: num(cs.download_throttle_rate), rateInBits: !!cs.download_rate_bits_per_s,
             restrictAutoUpdates: !!cs.restrict_auto_updates, restrictStart: num(cs.restrict_auto_updates_start), restrictEnd: num(cs.restrict_auto_updates_end),
             downloadWhilePlaying: !!cs.download_while_app_running, throttleWhileStreaming: !!cs.download_throttle_while_streaming,
-            shaderPrecache: !!cs.enable_shader_precache, peerContent: num(cs.download_peer_content), cloudEnabled: !!cs.cloud_enabled,
+            shaderPrecache: !!cs.enable_shader_precache, peerContent: num(cs.download_peer_content), cloudEnabled: !!cs.cloud_enabled, overlayEnabled: cs.enable_overlay !== false,
             language: String(lang || ''), languages: (langs || []).map(String), folders: each(folders(), folder) };
         },
         setSetting(name, value) {
           const allowed = ['download_region', 'download_throttle_rate', 'download_rate_bits_per_s', 'restrict_auto_updates',
                            'restrict_auto_updates_start', 'restrict_auto_updates_end', 'download_while_app_running',
-                           'download_throttle_while_streaming', 'enable_shader_precache', 'download_peer_content', 'cloud_enabled'];
+                           'download_throttle_while_streaming', 'enable_shader_precache', 'download_peer_content', 'cloud_enabled',
+                           'enable_overlay'];
           if (!allowed.includes(name)) throw new Error('not allowed: ' + name);
           locate();
           // Steam's own writer: serializes {name: value} as CMsgClientSettings and calls SetSetting(base64).
@@ -1506,7 +1508,7 @@ extension SteamUI.AppDetails.DLC {
 extension SteamUI.Settings {
     enum CodingKeys: String, CodingKey {
         case downloadRegion, regions, throttleKbps, rateInBits, restrictAutoUpdates, restrictStart, restrictEnd
-        case downloadWhilePlaying, throttleWhileStreaming, shaderPrecache, peerContent, cloudEnabled, language, languages, folders
+        case downloadWhilePlaying, throttleWhileStreaming, shaderPrecache, peerContent, cloudEnabled, overlayEnabled, language, languages, folders
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1514,6 +1516,7 @@ extension SteamUI.Settings {
         restrictAutoUpdates = c.value(.restrictAutoUpdates); restrictStart = c.value(.restrictStart); restrictEnd = c.value(.restrictEnd)
         downloadWhilePlaying = c.value(.downloadWhilePlaying); throttleWhileStreaming = c.value(.throttleWhileStreaming)
         shaderPrecache = c.value(.shaderPrecache); peerContent = c.value(.peerContent); cloudEnabled = c.value(.cloudEnabled)
+        overlayEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .overlayEnabled)) ?? true
         language = c.value(.language); languages = c.list(.languages); folders = c.list(.folders)
     }
 }

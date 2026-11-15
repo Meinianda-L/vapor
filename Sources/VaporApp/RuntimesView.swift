@@ -174,6 +174,11 @@ struct SettingsView: View {
                 Section("Steam 云") {
                     Toggle("为支持的应用程序启用 Steam 云同步", isOn: set("cloud_enabled", st, \.cloudEnabled))
                 }
+                Section {
+                    Toggle(engine.strings("Settings_InGame_EnableOverlay") ?? "在游戏中启用 Steam 界面", isOn: set("enable_overlay", st, \.overlayEnabled))
+                } header: { Text("游戏中") } footer: {
+                    Text("Shift+Tab 打开的好友、浏览器和市场。在 Wine 下它偶尔会让 Steam 的界面进程崩溃（Steam 会自行恢复）；遇到问题可以关掉。")
+                }
             } else {
                 Section("Steam") {
                     Text(engine.uiOnline ? "正在读取 Steam 设置…" : "Windows Steam 在线后可在这里修改它的设置。").foregroundStyle(.secondary)
