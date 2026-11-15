@@ -47,9 +47,10 @@ final class EngineModel: ObservableObject {
     private let signals: DownloadSignals? = Bundle.main.bundleIdentifier != nil
         && !ProcessInfo.processInfo.arguments.contains("--snapshot") ? DownloadSignals() : nil
     /// Steam's own strings (Chinese), for errors and download states.
-    let strings: SteamStrings
+    private(set) var strings: SteamStrings
 
-    let steam: WindowsSteam?
+    /// Nil until first-run setup has installed Windows Steam (see OnboardingView).
+    private(set) var steam: WindowsSteam? { didSet { objectWillChange.send() } }
     let ui = SteamUI()
     private var timer: Timer?
     private var checking = false
@@ -72,12 +73,24 @@ final class EngineModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
-        if let steam {
-            Task {
-                let info = await Task.detached(priority: .utility) { steam.appInfo() }.value
-                self.appInfo = info
-            }
+        loadAppInfo()
+    }
+
+    private func loadAppInfo() {
+        guard let steam else { return }
+        Task {
+            let info = await Task.detached(priority: .utility) { steam.appInfo() }.value
+            self.appInfo = info
         }
+    }
+
+    /// First-run setup has just installed and started Windows Steam: pick it up and connect.
+    func adoptSetup() {
+        guard steam == nil, let found = WindowsSteam.detectDefault() else { return }
+        strings = SteamStrings(steamRoot: found.steamRoot)
+        steam = found
+        loadAppInfo()
+        refresh()
     }
 
     var statusText: String {
