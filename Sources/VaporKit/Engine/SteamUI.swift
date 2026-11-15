@@ -1,0 +1,1475 @@
+import Foundation
+
+/// Drives Windows Steam through its own UI runtime.
+///
+/// steamui's SharedJSContext holds `SteamClient.*` — the native bindings Steam's library, download and
+/// install pages are built on — plus the page's stores (appStore, collectionStore, downloadsStore, …).
+/// It is reachable over CEF remote debugging (127.0.0.1 only) when `.cef-enable-remote-debugging`
+/// exists next to steam.exe. Vapor injects a small agent there (`window.__vapor`) and polls it, so
+/// install, download and uninstall go through exactly the code paths Steam's own buttons use.
+public final class SteamUI: @unchecked Sendable {
+    /// Passed to steam.exe as `-devtools-port`.
+    public static let port = 38917
+
+    public enum Failure: Error, CustomStringConvertible {
+        case unreachable
+        case timeout
+        case noTarget(String)
+        case script(String)
+        case badReply
+        public var description: String {
+            switch self {
+            case .unreachable: return "无法连接 Windows Steam 的界面进程。"
+            case .timeout: return "Windows Steam 的界面进程没有及时响应。"
+            case let .noTarget(t): return "Windows Steam 界面里没有 \(t)。"
+            case let .script(m): return "Steam 界面脚本出错：\(m)"
+            case .badReply: return "Steam 界面返回了无法识别的数据。"
+            }
+        }
+    }
+
+    public struct Target: Decodable, Sendable {
+        public let title: String
+        public let url: String
+        public let webSocketDebuggerUrl: String?
+    }
+
+    let port: Int
+    private let session: URLSession
+    private let link = Link()
+    private let subscriber = Subscriber()
+
+    public init(port: Int = SteamUI.port) {
+        self.port = port
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 5
+        session = URLSession(configuration: config)
+    }
+
+    // MARK: - CDP transport
+
+    public func targets() async throws -> [Target] {
+        guard let (data, _) = try? await session.data(from: URL(string: "http://127.0.0.1:\(port)/json")!) else { throw Failure.unreachable }
+        return try JSONDecoder().decode([Target].self, from: data)
+    }
+
+    /// One CDP command. SharedJSContext goes over the persistent connection; other targets get a
+    /// short-lived socket.
+    public func send(_ method: String, params: [String: Any] = [:], target title: String = "SharedJSContext") async throws -> [String: Any] {
+        if title == "SharedJSContext" { return try await link.connection(self).call(method, params) }
+        guard let target = try await targets().first(where: { $0.title == title }),
+              let ws = target.webSocketDebuggerUrl, let url = URL(string: ws) else { throw Failure.noTarget(title) }
+        let c = CDPConnection(url: url, session: session)
+        defer { c.close(nil) }
+        return try await c.call(method, params)
+    }
+
+    /// Runs `body` as an async function in the target and returns its value as JSON data.
+    public func evaluate(_ body: String, target: String = "SharedJSContext") async throws -> Data {
+        let result = try await send("Runtime.evaluate", params: [
+            "expression": "(async () => JSON.stringify(await (async () => { \(body) })() ?? null))()",
+            "awaitPromise": true, "returnByValue": true,
+        ], target: target)
+        if let details = result["exceptionDetails"] as? [String: Any] {
+            let exception = details["exception"] as? [String: Any]
+            throw Failure.script(exception?["description"] as? String ?? details["text"] as? String ?? "?")
+        }
+        guard let value = (result["result"] as? [String: Any])?["value"] as? String else { throw Failure.badReply }
+        return Data(value.utf8)
+    }
+
+    /// Calls `__vapor.<expression>`. The agent is injected when the connection opens and whenever
+    /// Steam's UI context is recreated; the injection here only covers a reload racing a call.
+    func agent(_ expression: String) async throws -> Data {
+        try await evaluate("\(Self.injection)\nreturn await window.__vapor.\(expression);")
+    }
+
+    // MARK: - Live updates
+
+    /// Pushes a snapshot whenever Steam's download manager, install wizard or library changes (the
+    /// agent listens to the same client callbacks Steam's pages do), instead of polling.
+    public func subscribe(_ handler: @escaping @Sendable (Snapshot) -> Void) {
+        subscriber.set(handler)
+    }
+
+    /// Opens the live connection if Steam is up; cheap when already connected.
+    public func connect() async -> Bool {
+        (try? await link.connection(self)) != nil
+    }
+
+    public var isConnected: Bool { link.isOpen }
+
+    fileprivate func open() async throws -> CDPConnection {
+        guard let target = try await targets().first(where: { $0.title == "SharedJSContext" }),
+              let ws = target.webSocketDebuggerUrl, let url = URL(string: ws) else { throw Failure.noTarget("SharedJSContext") }
+        let c = CDPConnection(url: url, session: session)
+        let subscriber = self.subscriber
+        // Runtime.enable replays the existing context before it replies; open() primes that one itself.
+        let enabled = Flag()
+        c.onEvent = { [weak self, weak c] method, params in
+            switch method {
+            case "Runtime.bindingCalled" where params["name"] as? String == "__vaporEmit":
+                guard let payload = params["payload"] as? String else { return }
+                do { subscriber.deliver(try JSONDecoder().decode(Snapshot.self, from: Data(payload.utf8))) }
+                catch { NSLog("Vapor: unreadable snapshot from Steam: \(error)") }
+            case "Runtime.executionContextCreated":
+                // Steam's UI reloaded: the agent and its subscription are gone with the old context.
+                guard enabled.value, let self, let c,
+                      ((params["context"] as? [String: Any])?["auxData"] as? [String: Any])?["isDefault"] as? Bool == true else { return }
+                Task { await self.reprime(c) }
+            case "Inspector.targetCrashed", "Inspector.detached":
+                c?.close(Failure.unreachable)
+            default: break
+            }
+        }
+        do {
+            _ = try await c.call("Runtime.addBinding", ["name": "__vaporEmit"])
+            _ = try await c.call("Runtime.enable", [:])
+            enabled.value = true
+            _ = try await c.call("Inspector.enable", [:])
+            try await prime(c)
+            return c
+        } catch {
+            c.close(error)
+            throw error
+        }
+    }
+
+    /// Injects the agent unless this version is already there, then subscribes. Both are idempotent, so
+    /// several clients (the app, the CLI) share one agent; `__vaporEmit` reaches every session that bound it.
+    private func prime(_ c: CDPConnection) async throws {
+        let r = try await c.call("Runtime.evaluate", ["expression": "\(Self.injection)\nwindow.__vapor.subscribe();", "returnByValue": true])
+        if let details = r["exceptionDetails"] as? [String: Any] {
+            let exception = details["exception"] as? [String: Any]
+            throw Failure.script(exception?["description"] as? String ?? details["text"] as? String ?? "?")
+        }
+    }
+
+    /// A failed re-prime would leave the connection open with nothing pushing; closing it lets `connect()` start over.
+    private func reprime(_ c: CDPConnection) async {
+        for _ in 0..<5 {
+            if c.isClosed { return }
+            if (try? await prime(c)) != nil { return }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        c.close(Failure.unreachable)
+    }
+
+    // MARK: - API
+
+    public struct App: Decodable, Sendable, Equatable {
+        public let appid: UInt32
+        public let name: String
+        public let type: Int              // 1 game, 2 application, 4 tool, 8 demo …
+        public let installed: Bool
+        public let displayStatus: Int
+        public let percent: Int
+        public let sizeOnDisk: Int64
+        public let minutesPlayed: Int
+        public let lastPlayed: Int
+    }
+
+    /// One row of Steam's download list (CDownloadItem): `queueIndex` -1 means not queued.
+    public struct Download: Decodable, Sendable, Equatable {
+        public let appid: UInt32
+        public let active: Bool
+        public let paused: Bool
+        public let completed: Bool
+        public let queueIndex: Int
+        public let deferredTime: Int
+        public let completedTime: Int
+        public let downloaded: Int64      // k_EAppUpdateProgress_Download, summed over content/workshop/shader
+        public let total: Int64
+        public let buildID: Int
+        public let targetBuildID: Int
+        public let updateResult: Int
+        public let contentTypes: [Int]    // 0 content, 1 workshop, 2 shader — those with an update
+
+        public var isQueued: Bool { queueIndex >= 0 && deferredTime == 0 }
+        public var isUpdate: Bool { buildID != 0 }
+    }
+
+    /// The download manager's live state (CDownloadOverview for this machine).
+    public struct Overview: Decodable, Sendable, Equatable {
+        public let appid: UInt32
+        public let state: String          // "None", "Downloading", "Staging", "Committing", …
+        public let paused: Bool
+        public let networkBytesPerSecond: Int64
+        public let peakBytesPerSecond: Int64
+        public let diskBytesPerSecond: Int64
+        public let percent: Double
+        public let secondsRemaining: Int
+        public let startTime: Int
+        public let isInstall: Bool
+        public let isWorkshop: Bool
+        public let isShader: Bool
+        public let stages: [Stage]        // indexed by EAppUpdateProgress
+
+        public struct Stage: Decodable, Sendable, Equatable {
+            public let done: Int64
+            public let total: Int64
+        }
+        public static let stageNames = ["校验已安装文件", "分配磁盘", "下载", "整理文件", "校验暂存文件", "复制", "写入"]
+    }
+
+    public struct Sample: Decodable, Sendable, Equatable {
+        public let time: Int
+        public let network: Int64
+        public let disk: Int64
+    }
+
+    /// The install wizard as Vapor drives it. Steam's own wizard UI is detached while the agent runs.
+    public struct Install: Decodable, Sendable, Equatable {
+        public let appid: UInt32
+        public let state: Int             // EInstallMgrState
+        public let required: Int64
+        public let available: Int64
+        public let error: Int
+        public let step: String?          // "eula", "cdkey", "password", "signup": waiting on the user
+        public let problem: String?       // "disk", "uninstall", "unrequested" (a wizard Vapor did not open, closed), or a Steam error
+        public let done: Bool
+        public let eulas: [Eula]?
+        public let keys: [Key]?
+
+        public struct Eula: Decodable, Sendable, Equatable, Identifiable {
+            public let id: String
+            public let url: String
+            public let version: Int
+            public let title: String?
+            public let content: String?   // HTML from the EULA page (?json=1)
+        }
+        public struct Key: Decodable, Sendable, Equatable {
+            public let appid: UInt32
+            public let name: String
+            public let key: String
+        }
+
+        public var needsUser: Bool { step != nil && !done }
+
+        static let stateNames = ["None", "Setup", "WaitLicense", "FreeLicense", "ShowCDKey", "WaitAppInfo", "ShowPassword",
+                                 "ShowConfig", "ShowEULAs", "CreateApps", "ReadFromMedia", "ShowChangeMedia",
+                                 "WaitLegacyCDKeys", "ShowSignup", "Complete", "Failed", "Canceled"]
+        public var stateName: String { Self.stateNames.indices.contains(state) ? Self.stateNames[state] : "\(state)" }
+    }
+
+    public struct Folder: Decodable, Sendable, Equatable {
+        public let index: Int
+        public let path: String
+        public let free: Int64
+        public let capacity: Int64
+        public let isDefault: Bool
+    }
+
+    public struct Account: Decodable, Sendable, Equatable {
+        public let persona: String
+        public let accountName: String
+        public let steamID: String
+        public let wallet: String
+        public let personaState: Int      // EPersonaState of the signed-in user: 0 offline, 1 online, 3 away, 7 invisible
+        public let avatar: URL?
+    }
+
+    /// One friend conversation that has history or unread messages.
+    public struct ChatSummary: Decodable, Sendable, Equatable {
+        public let steamID: String
+        public let unread: Int
+        public let lastTime: Int
+        public let last: String
+    }
+
+    public struct ChatMessage: Decodable, Sendable, Equatable {
+        public let fromMe: Bool
+        public let text: String           // Steam BBCode ([emoticon], [url], [img] …)
+        public let time: Int
+        public let failed: Bool
+    }
+
+    /// An entry of Steam's notification tray (gifts, items, comments, wishlist sales, friend invites …).
+    public struct Notification: Decodable, Sendable, Equatable, Identifiable {
+        public let id: String
+        public let type: Int              // ESteamNotificationType
+        public let time: Int
+        public let read: Bool
+        public let count: Int             // rolled-up entries
+        public let body: String           // the notification's JSON payload, as Steam sends it
+    }
+
+    /// Messages with one friend, loading Steam's chat history on first use.
+    public func chat(with steamID: String) async throws -> [ChatMessage] {
+        try JSONDecoder().decode(Lossy.List<ChatMessage>.self, from: try await agent("chat(\(literal(steamID)))")).items
+    }
+    public func sendChat(to steamID: String, _ text: String) async throws { _ = try await agent("sendChat(\(literal(steamID)), \(literal(text)))") }
+    public func markChatRead(_ steamID: String) async throws { _ = try await agent("readChat(\(literal(steamID)))") }
+    public func notifications() async throws -> [Notification] {
+        try JSONDecoder().decode(Lossy.List<Notification>.self, from: try await agent("notifications()")).items
+    }
+    public func markNotificationsViewed() async throws { _ = try await agent("notificationsViewed()") }
+    /// 在线 / 离开 / 隐身 / 离线 for the signed-in user (EPersonaState 1 / 3 / 7 / 0).
+    public func setPersonaState(_ state: Int) async throws { _ = try await agent("setPersona(\(state))") }
+
+    public struct Snapshot: Decodable, Sendable, Equatable {
+        public let loggedIn: Bool
+        public let account: Account?
+        public let downloadsPaused: Bool
+        public let downloads: [Download]
+        public let overview: Overview?
+        public let history: [Sample]
+        public let install: Install?
+        public let uninstallRequest: [UInt32]?   // Steam asked to confirm an uninstall; see confirmUninstall()
+        public let running: [UInt32]?            // apps running in Windows Steam; nil from older agents
+        public let folders: [Folder]
+        public let apps: [App]?
+        public let detached: [String]            // Steam UI handlers Vapor took over
+        public let shelves: Shelves?             // favourites, hidden and user collections; sent with `apps`
+        public let chats: [ChatSummary]?         // friend conversations with history or unread messages
+        public let unreadNotifications: Int?
+    }
+
+    /// The library's own organisation (collectionStore), synced by Steam across devices.
+    public struct Shelves: Decodable, Sendable, Equatable {
+        public let favorites: [UInt32]
+        public let hidden: [UInt32]
+        public let collections: [Collection]
+
+        public struct Collection: Decodable, Sendable, Equatable, Identifiable {
+            public let id: String
+            public let name: String
+            public let apps: [UInt32]
+            public let dynamic: Bool       // filter-based: apps cannot be added by hand
+        }
+    }
+
+    public func setFavorite(_ appids: [UInt32], _ on: Bool) async throws { _ = try await agent("shelf('favorite', \(appids), \(on))") }
+    public func setHidden(_ appids: [UInt32], _ on: Bool) async throws { _ = try await agent("shelf('hidden', \(appids), \(on))") }
+    public func setInCollection(_ id: String, _ appids: [UInt32], _ on: Bool) async throws {
+        _ = try await agent("shelf(\(literal(id)), \(appids), \(on))")
+    }
+    /// Creates a user collection with these games, as the client's 添加至 › 新收藏… does.
+    public func newCollection(_ name: String, _ appids: [UInt32]) async throws {
+        _ = try await agent("newCollection(\(literal(name)), \(appids))")
+    }
+
+    /// Everything Vapor shows; `apps` (the whole library) only when asked, and nil while Steam is still loading it.
+    public func snapshot(includeApps: Bool = false) async throws -> Snapshot {
+        try JSONDecoder().decode(Snapshot.self, from: try await agent("snapshot(\(includeApps))"))
+    }
+
+    /// Steam's own install path (what the library's Install button calls), with Vapor answering the wizard.
+    public func install(_ appid: UInt32) async throws { _ = try await agent("install(\(appid))") }
+
+    /// Opens the install wizard far enough to learn size and free space, then cancels. Downloads nothing.
+    /// Nil while an install or another probe holds the wizard.
+    public func probeInstall(_ appid: UInt32) async throws -> Install? {
+        try JSONDecoder().decode(Install?.self, from: try await agent("probe(\(appid))"))
+    }
+
+    /// The user accepted every agreement shown in Vapor: record each with Steam, then continue.
+    public func acceptEulas() async throws { _ = try await agent("acceptEulas()") }
+    public func continueInstall() async throws { _ = try await agent("continueInstall()") }
+    public func cancelInstall() async throws { _ = try await agent("cancelInstall()") }
+    public func uninstall(_ appid: UInt32) async throws { _ = try await agent("uninstall(\(appid))") }
+    /// Answers `Snapshot.uninstallRequest` (an uninstall Steam itself asked to confirm, e.g. steam://uninstall).
+    /// Agent side only: VaporApp does not yet show `uninstallRequest` or call these, so until EngineModel adds a
+    /// confirmation for it such a request is held here (no files are removed) and the user is not asked.
+    public func confirmUninstall() async throws { _ = try await agent("confirmUninstall()") }
+    public func declineUninstall() async throws { _ = try await agent("declineUninstall()") }
+    public func pause(_ appid: UInt32) async throws { _ = try await agent("pause(\(appid))") }
+    public func resume(_ appid: UInt32) async throws { _ = try await agent("resume(\(appid))") }
+    public func queue(_ appid: UInt32) async throws { _ = try await agent("queue(\(appid))") }
+    public func remove(_ appid: UInt32) async throws { _ = try await agent("remove(\(appid))") }
+    public func move(_ appid: UInt32, to index: Int) async throws { _ = try await agent("move(\(appid), \(index))") }
+    public func setDownloadsEnabled(_ on: Bool) async throws { _ = try await agent("enableAll(\(on))") }
+    public func showSteamWindow(_ show: Bool) async throws { _ = try await agent("showMain(\(show))") }
+
+    /// What Steam's game Properties dialog shows (appDetailsStore), trimmed to what Vapor edits.
+    public struct AppDetails: Decodable, Sendable, Equatable {
+        public let appid: UInt32
+        public let name: String
+        public let installed: Bool
+        public let launchOptions: String
+        public let languages: [Language]
+        public let selectedLanguage: String
+        public let cloudAvailable: Bool
+        public let cloudEnabledForAccount: Bool
+        public let cloudEnabled: Bool
+        public let cloudUsed: String
+        public let cloudFree: String
+        public let autoUpdate: Int          // 0 Steam decides, 1 wait until launch, 2 high priority
+        public let backgroundDownloads: Int // 0 global setting, 1 always allow, 2 never
+        public let diskUsage: Int64
+        public let dlcUsage: Int64
+        public let buildID: Int
+        public let lastUpdated: Int
+        public let installFolder: String
+        public let installFolderIndex: Int
+        public let thirdPartyUpdater: Bool
+        public let betas: [Beta]
+        public let selectedBeta: String
+        public let hasPrivateBetas: Bool
+        public let dlc: [DLC]
+        public let developer: String
+        public let homepage: String
+        public let playtimeMinutes: Int
+        public let lastPlayed: Int
+        public let workshopVisible: Bool
+
+        public struct Language: Decodable, Sendable, Equatable, Hashable {
+            public let id: String
+            public let name: String
+        }
+        public struct Beta: Decodable, Sendable, Equatable, Hashable {
+            public let name: String
+            public let description: String
+            public let lastUpdated: Int
+        }
+        public struct DLC: Decodable, Sendable, Equatable, Identifiable {
+            public let id: UInt32
+            public let name: String
+            public let state: String
+            public let enabled: Bool
+            public let size: Int64
+        }
+    }
+
+    public func details(_ appid: UInt32) async throws -> AppDetails? {
+        try JSONDecoder().decode(AppDetails?.self, from: try await agent("details(\(appid))"))
+    }
+
+    private func literal(_ s: String) -> String {
+        String(decoding: (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8), as: UTF8.self) + "[0]"
+    }
+    public func setLaunchOptions(_ appid: UInt32, _ options: String) async throws { _ = try await agent("call('Apps', 'SetAppLaunchOptions', \(appid), \(literal(options)))") }
+    public func setLanguage(_ appid: UInt32, _ id: String) async throws { _ = try await agent("call('Apps', 'SetAppCurrentLanguage', \(appid), \(literal(id)))") }
+    public func toggleCloud(_ appid: UInt32) async throws { _ = try await agent("call('Apps', 'ToggleAppSteamCloudEnabled', \(appid))") }
+    public func setAutoUpdate(_ appid: UInt32, _ v: Int) async throws { _ = try await agent("call('Apps', 'SetAppAutoUpdateBehavior', \(appid), \(v))") }
+    public func setBackgroundDownloads(_ appid: UInt32, _ v: Int) async throws { _ = try await agent("call('Apps', 'SetAppBackgroundDownloadsBehavior', \(appid), \(v))") }
+    public func verify(_ appid: UInt32) async throws { _ = try await agent("call('Apps', 'VerifyApp', \(appid))") }
+    public func setDLC(_ appid: UInt32, _ dlc: UInt32, enabled: Bool) async throws { _ = try await agent("call('Apps', 'SetDLCEnabled', \(appid), \(dlc), \(enabled))") }
+    public func setBeta(_ appid: UInt32, _ name: String) async throws { _ = try await agent("call('Apps', 'JoinAppContentBeta', \(appid), \(literal(name)))") }
+    public func moveInstall(_ appid: UInt32, toFolder index: Int) async throws { _ = try await agent("call('InstallFolder', 'MoveInstallFolderForApp', \(appid), \(index))") }
+
+    // MARK: - Community
+
+    /// One achievement as Steam's game page shows it (SteamClient.Apps.GetMyAchievementsForApp).
+    public struct Achievement: Decodable, Sendable, Equatable, Identifiable {
+        public let id: String
+        public let name: String
+        public let description: String
+        public let achieved: Bool
+        public let unlockTime: Int
+        public let icon: URL?
+        public let hidden: Bool
+        public let globalPercent: Double
+    }
+
+    /// Empty when the game has no achievements or Steam has not loaded its stats.
+    public func achievements(_ appid: UInt32) async throws -> [Achievement] {
+        try JSONDecoder().decode(Lossy.List<Achievement>.self, from: try await agent("achievements(\(appid))")).items
+    }
+
+    /// A friend from the client's friends list (friendStore).
+    public struct Friend: Decodable, Sendable, Equatable, Identifiable {
+        public let steamID: String
+        public let name: String
+        public let state: Int             // EPersonaState: 0 offline, 1 online, 2 busy, 3 away, 4 snooze …
+        public let gameName: String
+        public let gameAppID: UInt32
+        public let avatar: URL?
+        public let lastOnline: Int
+
+        public var id: String { steamID }
+        public var isOnline: Bool { state != 0 }
+    }
+
+    public func friends() async throws -> [Friend] {
+        try JSONDecoder().decode(Lossy.List<Friend>.self, from: try await agent("friends()")).items
+    }
+
+    // MARK: - Steam settings
+
+    public struct Settings: Decodable, Sendable, Equatable {
+        public let downloadRegion: Int
+        public let regions: [Region]
+        public let throttleKbps: Int        // download_throttle_rate, 0 = unlimited
+        public let rateInBits: Bool
+        public let restrictAutoUpdates: Bool
+        public let restrictStart: Int
+        public let restrictEnd: Int
+        public let downloadWhilePlaying: Bool
+        public let throttleWhileStreaming: Bool
+        public let shaderPrecache: Bool
+        public let peerContent: Int
+        public let cloudEnabled: Bool
+        public let language: String
+        public let languages: [String]
+        public let folders: [Folder]
+
+        public struct Region: Decodable, Sendable, Equatable, Hashable {
+            public let id: Int
+            public let name: String
+        }
+    }
+
+    public func settings() async throws -> Settings {
+        try JSONDecoder().decode(Settings.self, from: try await agent("settings()"))
+    }
+
+    /// Writes one client setting by its settingsStore name (download_region, download_throttle_rate …).
+    public func setSetting(_ name: String, _ value: Any) async throws {
+        let v = String(decoding: try JSONSerialization.data(withJSONObject: [value]), as: UTF8.self) + "[0]"
+        _ = try await agent("setSetting(\(literal(name)), \(v))")
+    }
+    public func clearDownloadCache() async throws { _ = try await agent("call('Settings', 'ClearDownloadCache')") }
+    public func addLibraryFolder(_ windowsPath: String) async throws { _ = try await agent("call('InstallFolder', 'AddInstallFolder', \(literal(windowsPath)))") }
+    public func removeLibraryFolder(_ index: Int) async throws { _ = try await agent("call('InstallFolder', 'RemoveInstallFolder', \(index))") }
+    public func setDefaultLibraryFolder(_ index: Int) async throws { _ = try await agent("call('InstallFolder', 'SetDefaultInstallFolder', \(index))") }
+    public func repairLibraryFolder(_ index: Int) async throws { _ = try await agent("call('InstallFolder', 'RepairInstallFolder', \(index))") }
+
+    /// Runs a steam:// URL inside the client.
+    public func open(steamURL: String) async throws {
+        let literal = String(decoding: try JSONSerialization.data(withJSONObject: [steamURL]), as: UTF8.self)
+        _ = try await evaluate("SteamClient.URL.ExecuteSteamURL(\(literal)[0]); return true;")
+    }
+
+    // MARK: - Web session
+
+    public struct Cookie: Sendable {
+        public let name, value, domain, path: String
+        public let secure, httpOnly: Bool
+    }
+
+    /// The client's web login, as its built-in store browser holds it. Session cookies only; Steam
+    /// refreshes them at every logon, so callers should copy them into a non-persistent store.
+    public func webCookies() async throws -> [Cookie] {
+        let store = try await targets().first { $0.url.hasPrefix("https://store.steampowered.com") }?.title ?? "SharedJSContext"
+        let hosts = ["store.steampowered.com", "checkout.steampowered.com", "help.steampowered.com", "steamcommunity.com", "login.steampowered.com"]
+        let result = try await send("Network.getCookies", params: ["urls": hosts.map { "https://\($0)/" }], target: store)
+        return (result["cookies"] as? [[String: Any]] ?? []).compactMap { c in
+            guard let name = c["name"] as? String, let value = c["value"] as? String, let domain = c["domain"] as? String else { return nil }
+            return Cookie(name: name, value: value, domain: domain, path: c["path"] as? String ?? "/",
+                          secure: c["secure"] as? Bool ?? false, httpOnly: c["httpOnly"] as? Bool ?? false)
+        }
+    }
+
+    /// The store user agent the client uses, so pages render their in-client buttons (steam://launch …).
+    public func storeUserAgent() async throws -> String {
+        try JSONDecoder().decode(String.self, from: try await evaluate("return navigator.userAgent;"))
+    }
+
+    // MARK: - Agent
+
+    static let agentVersion = 13
+
+    /// Replaces the agent only when it is another version and idle: every client shares one agent, and an
+    /// install or probe in flight must keep the agent that is driving it.
+    static let injection = """
+    if (window.__vapor?.version !== \(agentVersion) && !window.__vapor?.busy?.()) {
+    \(agentSource)
+    window.__vapor.subscribe();
+    }
+    """
+
+    /// Installed into SharedJSContext.
+    ///
+    /// Steam's install manager singleton is not global; it is found through webpack's module table by a
+    /// line of its own source. Its Init registers nine client callbacks in a fixed order; the agent
+    /// unregisters the install-wizard and uninstall ones (finding their slots from Init's source) and
+    /// answers those callbacks itself, so Steam never opens its window. `dispose` puts Steam's back.
+    /// steamui boots in stages (webpack, then the stores, then Init), so nothing here assumes it is done:
+    /// the takeover is retried until it succeeds and every store read tolerates a store that is not there yet.
+    static let agentSource = #"""
+    window.__vapor?.dispose?.();
+    window.__vapor = (() => {
+      const CLIENT = '0';                       // this machine; other ids are remote-download clients
+      const DONE = new Set([0, 14, 15, 16]);
+      const num = v => Number(v ?? 0) || 0;
+      const g = f => { try { return f(); } catch { return undefined; } };   // page globals may not be declared yet
+      let run = null;                           // the install being driven right now
+      let probe = null;
+      let uninstallRequest = null;
+      let quietUntil = 0;                       // a probe's own cancel echoes back; ignore it
+      let disposed = false;
+
+      // --- find Steam's install manager -------------------------------------------------------------
+      let req = null, im = null, pushed = false, scanned = 0;
+      const findModule = needle => {
+        if (!req) return;
+        for (const id of Object.keys(req.m)) if (String(req.m[id]).includes(needle)) return req(id);
+      };
+      const locate = () => {
+        if (im) return true;
+        if (!window.webpackChunksteamui || !window.SteamClient) return false;
+        if (!pushed) { pushed = true; window.webpackChunksteamui.push([[Symbol('vapor')], {}, r => { req = r; }]); }
+        const n = req ? Object.keys(req.m).length : 0;
+        if (!n || n === scanned) return false;  // scan again only once more modules have loaded
+        scanned = n;
+        const mod = findModule('m_unAppIDExpectedInstall=');
+        im = (mod && Object.values(mod).find(v => v && typeof v.InstallApp === 'function' && typeof v.GetInstallManager === 'function')) || null;
+        return !!im;
+      };
+
+      const mainWindow = () => g(() => SteamUIStore.WindowStore.MainWindowInstance.BrowserWindow);
+      const showMain = show => {
+        const w = mainWindow()?.SteamClient?.Window; if (!w) return false;
+        if (show) { w.ShowWindow(); w.BringToFront(); } else w.HideWindow();
+        return true;
+      };
+
+      // --- take over Steam's wizard callbacks ---------------------------------------------------
+      const taken = { RegisterForShowInstallWizard: 'OnShowInstallWizard', RegisterForShowConfirmUninstall: 'OnShowConfirmUninstall',
+                      RegisterForShowFailedUninstall: 'OnShowFailedUninstall' };
+      const detached = [];
+      const ours = [];
+      const takeover = () => {
+        if (detached.length) return true;
+        if (disposed || !locate()) return false;
+        const order = String(im.Init).match(/RegisterFor\w+/g) || [];
+        const handles = im.m_clientHandles?.m_rgHandles || [];
+        if (!order.length || order.length !== handles.length) return false;   // Init has not run yet
+        for (const name of Object.keys(taken)) {
+          const i = order.indexOf(name);
+          if (i >= 0 && handles[i]?.unregister) { handles[i].unregister(); detached.push([name, i]); }
+        }
+        if (!detached.length) return false;
+        for (const [name] of detached) ours.push(SteamClient.Installs[name](handlers[name]));
+        im.OnShowInstallWizard({ eInstallState: 0 });   // drop any dialog Steam already had up
+        emit();
+        return true;
+      };
+      let waiting = null;
+      // Resolves once the takeover is in place; gives up after 20 s (the 5 s heartbeat keeps trying).
+      const ready = () => waiting ??= new Promise(done => {
+        let tries = 0;
+        const tick = () => {
+          if (takeover()) return done(true);
+          if (disposed || ++tries >= 40) { waiting = null; return done(false); }
+          setTimeout(tick, 500);
+        };
+        tick();
+      });
+
+      const eulaContent = async e => {
+        try {
+          const u = new URL(e.url.replace('http://', 'https://'));
+          u.searchParams.append('eulaLang', 'schinese');   // Steam falls back to English when there is no translation
+          u.searchParams.append('json', '1');
+          const d = await (await fetch(u, { credentials: 'include' })).json();
+          return { title: d.title ?? null, content: d.content ?? null };
+        } catch { return { title: null, content: null }; }
+      };
+
+      const endProbe = result => { const p = probe; probe = null; clearTimeout(p.timer); p.resolve(result); };
+      const onWizard = async m => {
+        const state = m.eInstallState;
+        const appid = num(m.currentAppID);
+        if (probe) {                                // Steam has one wizard, and the probe opened it
+          if (state !== 7 && !DONE.has(state) && state !== 8 && state !== 4) return;
+          const p = probe; quietUntil = Date.now() + 3000;
+          endProbe({ appid: appid || p.appid, state, required: num(m.nDiskSpaceRequired), available: num(m.nDiskSpaceAvailable),
+                     error: num(m.eAppError), step: null, problem: null, done: false, eulas: null, keys: null });
+          if (!DONE.has(state)) SteamClient.Installs.CancelInstall();
+          return;
+        }
+        if (!run || run.done) {
+          // Nothing to drive: idle, a finished wizard, or a probe's echo. A new flow never inherits an old run's eulas or problem.
+          if (state === 0 || state === 14 || state === 16 || Date.now() < quietUntil) return;
+          run = { appid, driven: false, step: null, problem: null, done: false, eulas: null, keys: null };
+        } else if (appid && run.appid && appid !== run.appid && DONE.has(state)) return;   // another game's wizard ended
+        Object.assign(run, { appid: appid || run.appid, state, required: num(m.nDiskSpaceRequired),
+                             available: num(m.nDiskSpaceAvailable), error: num(m.eAppError) });
+        run.done = DONE.has(state);
+        if (run.done) { run.step = null; return; }
+        if (state === 7) {
+          run.step = null;
+          if (!run.driven) {
+            // A wizard nobody asked Vapor to run (steam://install, a launch that needs an install…) never starts a
+            // download, and Steam's own dialog is detached, so close it and tell the user instead of leaving it open unseen.
+            Object.assign(run, { problem: 'unrequested', done: true, state: 15 });
+            await SteamClient.Installs.CancelInstall();
+            return;
+          }
+          if (num(m.nDiskSpaceAvailable) > 0 && num(m.nDiskSpaceRequired) >= num(m.nDiskSpaceAvailable)) {
+            run.problem = 'disk';
+            await SteamClient.Installs.CancelInstall();
+            return;
+          }
+          const folder = m.iInstallFolder >= 0 ? m.iInstallFolder : num(g(() => installFolderStore.DefaultInstallFolderIndex));
+          if (m.iInstallFolder !== folder) await SteamClient.Installs.SetInstallFolder(folder);
+          await SteamClient.Installs.ContinueInstall();
+        } else if (state === 8) {
+          run.step = 'eula';
+          const list = await SteamClient.Apps.LoadEula(run.appid);
+          run.eulas = await Promise.all((list || []).map(async e => ({ id: String(e.id ?? ''), url: e.url || '', version: num(e.version), ...(await eulaContent(e)) })));
+          if (!run.eulas.length) { run.step = null; await SteamClient.Installs.ContinueInstall(); }
+        } else if (state === 4) {
+          run.step = 'cdkey';
+          run.keys = (m.rgApps || []).filter(a => a.strKey).map(a => ({ appid: num(a.nAppID), name: a.strName || '', key: a.strKey }));
+        } else if (state === 6) {
+          run.step = 'password';
+        } else if (state === 13) {
+          run.step = 'signup';
+        } else {
+          run.step = null;
+        }
+      };
+      const handlers = {
+        RegisterForShowInstallWizard: m => {
+          onWizard(m)
+            // A rejected Steam call ends the run (report() then shows 无法安装), so busy() can never stick at true.
+            .catch(e => { if (run && !run.done) Object.assign(run, { problem: String(e), done: true, state: 15, step: null }); })
+            .finally(() => emit(!!run?.done));   // a finished install or uninstall changes the library
+        },
+        RegisterForShowConfirmUninstall: (apps, client) => {
+          uninstallRequest = { apps: (apps || []).map(Number).filter(Number.isFinite), client: client ?? CLIENT };
+          emit();
+        },
+        RegisterForShowFailedUninstall: (apps, err) => {
+          // An install in progress keeps its own state; the failure only replaces a finished run.
+          if (!run || run.done) run = { appid: num(apps?.[0]), state: 15, required: 0, available: 0, error: num(err), step: null,
+                                        problem: 'uninstall', done: true, eulas: null, keys: null };
+          emit(true);
+        },
+      };
+
+      // --- snapshot ---------------------------------------------------------------------------
+      const app = a => {
+        const pcd = (a.per_client_data || []).find(c => c.clientid === CLIENT) || {};
+        return { appid: num(a.appid), name: a.display_name || '', type: num(a.app_type), installed: !!pcd.installed,
+                 displayStatus: num(pcd.display_status), percent: num(pcd.status_percentage),
+                 sizeOnDisk: num(a.size_on_disk), minutesPlayed: num(a.minutes_playtime_forever), lastPlayed: num(a.rt_last_time_played) };
+      };
+      const DOWNLOAD = 2;
+      const item = i => {
+        const types = i.update_type_info || [];
+        const stage = k => types.reduce((s, u) => s + num(u.progress?.[k]?.bytes_in_progress), 0);
+        const total = k => types.reduce((s, u) => s + num(u.progress?.[k]?.bytes_total), 0);
+        return { appid: num(i.appid), active: !!i.active, paused: !!i.paused, completed: !!i.completed,
+                 queueIndex: i.queue_index ?? -1, deferredTime: num(i.deferred_time), completedTime: num(i.completed_time),
+                 downloaded: stage(DOWNLOAD), total: total(DOWNLOAD), buildID: num(i.buildid), targetBuildID: num(i.target_buildid),
+                 updateResult: num(i.update_result), contentTypes: types.map((u, k) => u.has_update ? k : -1).filter(k => k >= 0) };
+      };
+      const folder = f => ({ index: num(f.nFolderIndex), path: f.strFolderPath || '', free: num(f.nFreeSpace),
+                             capacity: num(f.nCapacity), isDefault: !!f.bIsDefaultFolder });
+      const folders = () => g(() => installFolderStore.AllInstallFolders) || [];
+      const each = (list, f) => list.map(x => g(() => f(x))).filter(Boolean);   // one odd record never drops the list
+      const account = () => {
+        const u = g(() => App.m_CurrentUser); if (!u) return null;
+        const me = g(() => friendStore.m_FriendsUIFriendStore.m_self.persona);
+        return { persona: me?.m_strPlayerName || '', accountName: u.strAccountName || '', steamID: u.strSteamID || '',
+                 wallet: u.strAccountBalance || '', personaState: num(me?.m_ePersonaState),
+                 avatar: g(() => me.avatar_url_full || me.avatar_url_medium) || null };
+      };
+
+      // --- push: the same client callbacks downloadsStore listens to -----------------------------
+      let emitTimer = null, lastApps = 0, lastItems = null, lastError = null, subscribed = false, heartbeat = null, retry = null;
+      const emit = withApps => {
+        if (withApps) lastApps = 0;
+        if (disposed || emitTimer || typeof window.__vaporEmit !== 'function') return;
+        emitTimer = setTimeout(() => {               // after Steam's own handlers updated its stores
+          emitTimer = null;
+          if (!g(() => downloadsStore)) return;      // steamui is still booting; the heartbeat comes back
+          // Progress ticks alone do not resend the library: only a changed download list or 15 s does.
+          const items = (g(() => downloadsStore.m_DownloadItems.get(CLIENT)) || []).map(i => i?.appid + ':' + !!i?.completed).join();
+          const now = Date.now();
+          try {
+            const s = api.snapshot(items !== lastItems || now - lastApps > 15000);
+            if (s.apps) { lastApps = now; lastItems = items; }
+            window.__vaporEmit(JSON.stringify(s));
+          } catch (e) {
+            if (String(e) !== lastError) { lastError = String(e); console.error('[vapor] snapshot failed', e); }
+          }
+        }, 80);
+      };
+
+      // An uninstall only flips per_client_data.installed, which the download list may never show: resend the library
+      // now and again while Steam removes the files.
+      const refreshApps = () => { emit(true); for (const ms of [2000, 6000]) setTimeout(() => emit(true), ms); };
+
+      // Friend chats live in the friends UI app inside this same context; account ids are SteamID64 - base.
+      const BASE = 76561197960265728n;
+      const friendChat = (sid, create) => g(() => g_FriendsUIApp.ChatStore.GetFriendChat(Number(BigInt(String(sid)) - BASE), create));
+      const chats = () => {
+        const friends = g(() => friendStore.m_FriendsUIFriendStore.all_friends) || [];
+        const out = [];
+        for (const f of friends) {
+          const sid = g(() => String(f.persona.m_steamid.ConvertTo64BitString())) || g(() => String(f.steamid64)) || '';
+          if (!sid) continue;
+          const c = friendChat(sid, false);
+          if (!c) continue;
+          const unread = num(g(() => c.unread_message_count)), lastTime = num(g(() => c.time_last_message));
+          if (unread || lastTime) out.push({ steamID: sid, unread, lastTime, last: String(g(() => c.GetLastMessage?.()) ?? c.m_strLastMessage ?? '') });
+        }
+        return out;
+      };
+      const trayEntries = () => {
+        const groups = g(() => NotificationStore.GetNotificationsInTray()[0]) || [];
+        const out = [];
+        for (const grp of groups) for (const n of (grp?.notifications || [])) {
+          const item = n?.data?.item || {};
+          out.push({ id: String(n.notificationID ?? item.notification_id ?? ''), type: num(item.notification_type ?? n.eType),
+                     time: num(n.rtCreated ?? item.timestamp), read: !!item.read, count: num(n.data?.rollup_count) || 1,
+                     body: typeof item.body_data === 'string' ? item.body_data : JSON.stringify(item.body_data ?? {}) });
+        }
+        return out.sort((a, b) => b.time - a.time);
+      };
+
+      // Favourites/hidden are system collections; user collections exclude Steam's automatic ones.
+      const shelves = () => {
+        const ids = c => c?.apps ? Array.from(c.apps.keys ? c.apps.keys() : c.apps).map(Number).filter(Boolean) : [];
+        const skip = new Set(['favorite', 'hidden', 'uncategorized']);
+        return { favorites: ids(collectionStore.GetCollection('favorite')), hidden: ids(collectionStore.GetCollection('hidden')),
+                 collections: (collectionStore.userCollections || []).filter(c => c && !skip.has(c.id) && !String(c.id).startsWith('type-'))
+                   .map(c => ({ id: String(c.id), name: c.displayName || '', apps: ids(c), dynamic: !!c.bIsDynamic })) };
+      };
+
+      const api = {
+        version: \#(agentVersion),
+        busy() { return !!probe || !!(run?.driven && !run.done); },
+        subscribe() {
+          if (!subscribed && !window.SteamClient) {
+            retry ??= setTimeout(() => { retry = null; api.subscribe(); }, 500);
+            return true;
+          }
+          if (!subscribed) {
+            subscribed = true;
+            ours.push(SteamClient.Downloads.RegisterForDownloadItems(() => emit()));
+            ours.push(SteamClient.Downloads.RegisterForDownloadOverview(() => emit()));
+            ours.push(SteamClient.InstallFolder.RegisterForInstallFolderChanges(() => emit()));
+            ours.push(SteamClient.GameSessions?.RegisterForAppLifetimeNotifications?.(() => emit()));
+            heartbeat = setInterval(() => { takeover(); emit(); }, 5000);
+          }
+          ready();
+          emit(true);
+          return true;
+        },
+        dispose() {
+          disposed = true;
+          clearInterval(heartbeat); clearTimeout(retry); clearTimeout(emitTimer);
+          if (probe) { SteamClient.Installs.CancelInstall(); endProbe(null); }   // the probe owns the open wizard
+          for (const h of ours) h?.unregister?.();
+          const handles = im?.m_clientHandles?.m_rgHandles;
+          if (handles) for (const [name, i] of detached) handles[i] = SteamClient.Installs[name](im[taken[name]]);
+        },
+        snapshot(includeApps) {
+          const ds = g(() => downloadsStore);
+          const ov = g(() => ds.m_DownloadOverview.get(CLIENT));
+          const items = g(() => ds.m_DownloadItems.get(CLIENT)) || [];
+          const hist = (g(() => ds.m_DownloadHistory.get(CLIENT)) || []).filter(h => h?.rt_sample_time);
+          const all = includeApps ? g(() => collectionStore.allGamesCollection.allApps) : null;
+          const login = g(() => App.m_eLoginState);
+          return {
+            loggedIn: login != null ? !!g(() => App.m_CurrentUser.strSteamID) : !!g(() => collectionStore.allGamesCollection.allApps.length),
+            account: account(),
+            downloadsPaused: !!ov?.paused,
+            downloads: each(items, item),
+            overview: g(() => ov && ov.update_appid ? { appid: num(ov.update_appid), state: ov.update_state || 'None', paused: !!ov.paused,
+              networkBytesPerSecond: num(ov.update_network_bytes_per_second), peakBytesPerSecond: num(ov.update_peak_network_bytes_per_second),
+              diskBytesPerSecond: num(ov.update_disc_bytes_per_second), percent: num(ov.overall_percent_complete),
+              secondsRemaining: num(ov.overall_estimated_time_remaining_sec), startTime: num(ov.update_start_time),
+              isInstall: !!ov.update_is_install, isWorkshop: !!ov.update_is_workshop, isShader: !!ov.update_is_shader,
+              stages: (ov.progress || []).map(p => ({ done: num(p?.bytes_in_progress), total: num(p?.bytes_total) })) } : null) ?? null,
+            history: hist.slice(-180).map(h => ({ time: num(h.rt_sample_time), network: num(h.network_bytes_per_second), disk: num(h.disc_bytes_per_second) })),
+            install: run && { appid: num(run.appid), state: run.state ?? 1, required: num(run.required), available: num(run.available),
+              error: num(run.error), step: run.step, problem: run.problem, done: run.done, eulas: run.eulas, keys: run.keys },
+            uninstallRequest: uninstallRequest?.apps ?? null,
+            running: (g(() => SteamUIStore.RunningApps) || []).map(a => num(a?.appid)).filter(Boolean),
+            folders: each(folders().filter(f => f?.bIsMounted), folder),
+            apps: Array.isArray(all) ? each(all, app) : null,
+            detached: detached.map(d => d[0]),
+            shelves: Array.isArray(all) ? g(shelves) ?? null : null,
+            chats: g(chats) ?? null,
+            unreadNotifications: g(() => trayEntries().filter(n => !n.read).reduce((s, n) => s + n.count, 0)) ?? null,
+          };
+        },
+        async install(appid) {
+          if (!await ready()) throw new Error('install manager not found');
+          if (probe) endProbe(null);                 // InstallApp replaces the probe's wizard; it must not capture this one
+          run = { appid, driven: true, state: 1, step: null, problem: null, done: false, eulas: null, keys: null };
+          im.InstallApp(appid, CLIENT);
+          emit();
+          return true;
+        },
+        async probe(appid) {
+          if (!await ready() || api.busy()) return null;   // never hijack an install or orphan another probe
+          return new Promise(resolve => {
+            const mine = { appid, resolve };
+            mine.timer = setTimeout(() => { if (probe === mine) { probe = null; SteamClient.Installs.CancelInstall(); resolve(null); } }, 20000);
+            probe = mine;
+            SteamClient.Installs.OpenInstallWizard([appid], CLIENT);
+          });
+        },
+        async acceptEulas() {
+          if (!run?.eulas) return false;
+          for (const e of run.eulas) await SteamClient.Apps.MarkEulaAccepted(run.appid, e.id, e.version);
+          Object.assign(run, { driven: true, step: null });
+          await SteamClient.Installs.ContinueInstall();
+          return true;
+        },
+        // The user answered a step in Vapor, so from here on the agent drives this wizard.
+        async continueInstall() { if (run) Object.assign(run, { driven: true, step: null }); await SteamClient.Installs.ContinueInstall(); return true; },
+        async cancelInstall() { await SteamClient.Installs.CancelInstall(); if (run) { run.step = null; run.done = true; run.state = 16; } emit(); return true; },
+        uninstall(appid) { uninstallRequest = null; SteamClient.Installs.OpenUninstallWizard([appid], CLIENT, true); refreshApps(); return true; },
+        // What Steam's own confirm dialog calls on OK.
+        confirmUninstall() {
+          const r = uninstallRequest; uninstallRequest = null;
+          if (r?.apps.length) SteamClient.Installs.OpenUninstallWizard(r.apps, r.client, true);
+          refreshApps();
+          return !!r;
+        },
+        declineUninstall() { uninstallRequest = null; emit(); return true; },
+        pause(appid) { SteamClient.Downloads.PauseAppUpdate(appid, CLIENT); return true; },
+        resume(appid) { SteamClient.Downloads.ResumeAppUpdate(appid, CLIENT); return true; },
+        queue(appid) { SteamClient.Downloads.QueueAppUpdate(appid, CLIENT); return true; },
+        remove(appid) { SteamClient.Downloads.RemoveFromDownloadList(appid, CLIENT); return true; },
+        move(appid, index) { SteamClient.Downloads.SetQueueIndex(appid, index, CLIENT); return true; },
+        enableAll(on) { SteamClient.Downloads.EnableAllDownloads(on, CLIENT); return true; },
+        showMain,
+        async chat(sid) {
+          const c = friendChat(sid, true);
+          if (!c) return [];
+          if (!c.m_bChatLogsLoaded) { await g(() => c.LoadChatLogs()); await new Promise(r => setTimeout(r, 600)); }
+          const me = num(g(() => friendStore.m_FriendsUIFriendStore.self.accountid));
+          return (c.chat_messages || []).slice(-300).map(m => ({ fromMe: num(m.unAccountID) === me, text: String(m.strMessage ?? ''),
+                                                                 time: num(m.rtTimestamp), failed: !!m.eErrorSending }));
+        },
+        async sendChat(sid, text) {
+          const c = friendChat(sid, true);
+          if (!c) throw new Error('no chat with ' + sid);
+          await c.SendChatMessage(String(text));
+          emit();
+          return true;
+        },
+        readChat(sid) { const c = friendChat(sid, false); g(() => c?.AckChatMsg?.()); emit(); return true; },
+        notifications() { return trayEntries(); },
+        notificationsViewed() { g(() => NotificationStore.Viewed()); emit(); return true; },
+        setPersona(state) {
+          const ok = [0, 1, 3, 7];
+          if (!ok.includes(Number(state))) throw new Error('not allowed: persona ' + state);
+          friendStore.m_FriendsUIFriendStore.SetUserPersonaState(Number(state), true);
+          emit();
+          return true;
+        },
+        shelf(id, appids, on) {
+          const ids = (appids || []).map(Number).filter(Number.isFinite);
+          if (id === 'favorite') collectionStore.SetAppsAsFavorite(ids, !!on);
+          else if (id === 'hidden') collectionStore.SetAppsAsHidden(ids, !!on);
+          else collectionStore.AddOrRemoveApp(ids, !!on, String(id));
+          emit(true);
+          return true;
+        },
+        async newCollection(name, appids) {
+          const apps = (appids || []).map(id => appStore.GetAppOverviewByAppID(Number(id))).filter(Boolean);
+          const c = collectionStore.NewUnsavedCollection(String(name).trim(), undefined, apps);
+          await collectionStore.SaveCollection(c);
+          emit(true);
+          return true;
+        },
+        // Whitelisted pass-through for Properties/Settings setters (namespace, method, args…).
+        async call(ns, method, ...args) {
+          const ok = { Apps: ['SetAppLaunchOptions', 'SetAppCurrentLanguage', 'ToggleAppSteamCloudEnabled', 'SetAppAutoUpdateBehavior',
+                              'SetAppBackgroundDownloadsBehavior', 'VerifyApp', 'SetDLCEnabled', 'JoinAppContentBeta'],
+                       InstallFolder: ['MoveInstallFolderForApp', 'AddInstallFolder', 'RemoveInstallFolder', 'SetDefaultInstallFolder', 'RepairInstallFolder'],
+                       Settings: ['ClearDownloadCache'] };
+          if (!ok[ns]?.includes(method)) throw new Error('not allowed: ' + ns + '.' + method);
+          const r = await SteamClient[ns][method](...args);
+          emit(true);
+          return r ?? true;
+        },
+        async details(appid) {
+          const store = g(() => appDetailsStore);
+          if (!store) return null;
+          let d = store.GetAppDetails?.(appid);
+          if (!d) {
+            d = await new Promise(resolve => {
+              const h = SteamClient.Apps.RegisterForAppDetails(appid, x => { h.unregister(); resolve(x); });
+              setTimeout(() => resolve(store.GetAppDetails?.(appid) || null), 5000);
+            });
+          }
+          if (!d) return null;
+          return { appid, name: d.strDisplayName || '', installed: !!d.bHasAnyLocalContent, launchOptions: d.strLaunchOptions || '',
+            languages: (d.vecLanguages || []).map(l => ({ id: l.strShortName || '', name: l.strDisplayName || l.strShortName || '' })),
+            selectedLanguage: d.selectedLanguage?.strShortName || '',
+            cloudAvailable: !!d.bCloudAvailable, cloudEnabledForAccount: !!d.bCloudEnabledForAccount, cloudEnabled: !!d.bCloudEnabledForApp,
+            cloudUsed: d.strCloudBytesUsed || '', cloudFree: d.strCloudBytesAvailable || '',
+            autoUpdate: num(d.eAutoUpdateValue), backgroundDownloads: num(d.eBackgroundDownloads),
+            diskUsage: num(d.lDiskUsageBytes), dlcUsage: num(d.lDlcUsageBytes), buildID: num(d.nBuildID), lastUpdated: num(d.rtLastUpdated),
+            installFolder: d.strInstallFolder || '', installFolderIndex: d.iInstallFolder ?? -1, thirdPartyUpdater: !!d.bIsThirdPartyUpdater,
+            betas: (d.vecBetas || []).map(b => ({ name: b.strName || '', description: b.strDescription || '', lastUpdated: num(b.rtLastUpdated) })),
+            selectedBeta: d.strSelectedBeta || 'public', hasPrivateBetas: !!d.bHasLockedPrivateBetas,
+            dlc: (d.vecDLC || []).map(x => ({ id: num(x.unAppID), name: x.strName || '', state: x.strState || '', enabled: !!x.bEnabled, size: num(x.lDiskUsageBytes) })),
+            developer: d.strDeveloperName || '', homepage: d.strHomepageURL || '', playtimeMinutes: num(d.nPlaytimeForever), lastPlayed: num(d.rtLastTimePlayed),
+            workshopVisible: !!d.bWorkshopVisible };
+        },
+        async settings() {
+          const cs = g(() => settingsStore.clientSettings) || {};
+          const regions = g(() => settingsStore.settings.vecValidDownloadRegions) || [];
+          let langs = [];
+          try { langs = await SteamClient.Settings.GetAvailableLanguages(); } catch {}
+          let lang = '';
+          try { lang = await SteamClient.Settings.GetCurrentLanguage(); } catch {}
+          return { downloadRegion: num(cs.download_region), regions: regions.map(r => ({ id: num(r.nRegionID), name: r.strRegionName || String(r.nRegionID) })),
+            throttleKbps: num(cs.download_throttle_rate), rateInBits: !!cs.download_rate_bits_per_s,
+            restrictAutoUpdates: !!cs.restrict_auto_updates, restrictStart: num(cs.restrict_auto_updates_start), restrictEnd: num(cs.restrict_auto_updates_end),
+            downloadWhilePlaying: !!cs.download_while_app_running, throttleWhileStreaming: !!cs.download_throttle_while_streaming,
+            shaderPrecache: !!cs.enable_shader_precache, peerContent: num(cs.download_peer_content), cloudEnabled: !!cs.cloud_enabled,
+            language: String(lang || ''), languages: (langs || []).map(String), folders: each(folders(), folder) };
+        },
+        setSetting(name, value) {
+          const allowed = ['download_region', 'download_throttle_rate', 'download_rate_bits_per_s', 'restrict_auto_updates',
+                           'restrict_auto_updates_start', 'restrict_auto_updates_end', 'download_while_app_running',
+                           'download_throttle_while_streaming', 'enable_shader_precache', 'download_peer_content', 'cloud_enabled'];
+          if (!allowed.includes(name)) throw new Error('not allowed: ' + name);
+          locate();
+          // Steam's own writer: serializes {name: value} as CMsgClientSettings and calls SetSetting(base64).
+          const w = findModule('SteamClient.Settings.SetSetting(X)');
+          const write = w && Object.values(w).find(f => typeof f === 'function' && String(f).includes('SetSetting('));
+          if (!write) throw new Error('settings writer not found');
+          write(name, value);
+          return true;
+        },
+        async achievements(appid) {
+          const r = await SteamClient.Apps.GetMyAchievementsForApp(String(appid));
+          return each(r?.data?.rgAchievements || [], a => ({ id: a.strID || '', name: a.strName || '', description: a.strDescription || '',
+            achieved: !!a.bAchieved, unlockTime: num(a.rtUnlocked), icon: a.strImage || null, hidden: !!a.bHidden, globalPercent: num(a.flAchieved) }));
+        },
+        friends() {
+          return each(g(() => friendStore.m_FriendsUIFriendStore.all_friends) || [], f => {
+            const p = f.persona;
+            return { steamID: String(f.steamid64 ?? ''), name: f.display_name || '', state: num(p.m_ePersonaState),
+                     gameName: f.current_game_name || '', gameAppID: num(p.m_unGamePlayedAppID),
+                     avatar: p.BHasAvatarSet?.() ? p.avatar_url_medium || null : null, lastOnline: num(p.m_rtLastSeenOnline) };
+          });
+        },
+      };
+      ready();
+      return api;
+    })();
+    """#
+}
+
+// MARK: - Lenient decoding
+
+// Steam's objects are loosely typed. A missing, null or odd field takes its type's empty value and an
+// unreadable list element is dropped, so one strange record never loses a whole snapshot.
+
+private protocol Blank { static var blank: Self { get } }
+extension Bool: Blank { fileprivate static var blank: Bool { false } }
+extension Int: Blank { fileprivate static var blank: Int { 0 } }
+extension Int64: Blank { fileprivate static var blank: Int64 { 0 } }
+extension UInt32: Blank { fileprivate static var blank: UInt32 { 0 } }
+extension Double: Blank { fileprivate static var blank: Double { 0 } }
+extension String: Blank { fileprivate static var blank: String { "" } }
+
+private enum Lossy {
+    struct Item<T: Decodable>: Decodable {
+        let value: T?
+        init(from decoder: Decoder) { value = try? T(from: decoder) }
+    }
+    struct List<T: Decodable>: Decodable {
+        let items: [T]
+        init(from decoder: Decoder) throws { items = try [Item<T>](from: decoder).compactMap(\.value) }
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func value<T: Decodable & Blank>(_ key: Key) -> T { (try? decodeIfPresent(T.self, forKey: key)) ?? .blank }
+    func optional<T: Decodable>(_ key: Key) -> T? { try? decodeIfPresent(T.self, forKey: key) }
+    func list<T: Decodable>(_ key: Key) -> [T] { optionalList(key) ?? [] }
+    func optionalList<T: Decodable>(_ key: Key) -> [T]? { (optional(key) as [Lossy.Item<T>]?)?.compactMap(\.value) }
+}
+
+// In extensions so the memberwise initializers stay. A hand-written init(from:) on a Decodable-only type
+// gets no synthesized CodingKeys, hence the explicit ones.
+
+extension SteamUI.App {
+    enum CodingKeys: String, CodingKey { case appid, name, type, installed, displayStatus, percent, sizeOnDisk, minutesPlayed, lastPlayed }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appid = c.value(.appid); name = c.value(.name); type = c.value(.type); installed = c.value(.installed)
+        displayStatus = c.value(.displayStatus); percent = c.value(.percent); sizeOnDisk = c.value(.sizeOnDisk)
+        minutesPlayed = c.value(.minutesPlayed); lastPlayed = c.value(.lastPlayed)
+    }
+}
+
+extension SteamUI.Download {
+    enum CodingKeys: String, CodingKey {
+        case appid, active, paused, completed, queueIndex, deferredTime, completedTime, downloaded, total, buildID, targetBuildID
+        case updateResult, contentTypes
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appid = c.value(.appid); active = c.value(.active); paused = c.value(.paused); completed = c.value(.completed)
+        queueIndex = c.optional(.queueIndex) ?? -1; deferredTime = c.value(.deferredTime); completedTime = c.value(.completedTime)
+        downloaded = c.value(.downloaded); total = c.value(.total); buildID = c.value(.buildID); targetBuildID = c.value(.targetBuildID)
+        updateResult = c.value(.updateResult); contentTypes = c.list(.contentTypes)
+    }
+}
+
+extension SteamUI.Overview {
+    enum CodingKeys: String, CodingKey {
+        case appid, state, paused, networkBytesPerSecond, peakBytesPerSecond, diskBytesPerSecond, percent, secondsRemaining
+        case startTime, isInstall, isWorkshop, isShader, stages
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appid = c.value(.appid); state = c.optional(.state) ?? "None"; paused = c.value(.paused)
+        networkBytesPerSecond = c.value(.networkBytesPerSecond); peakBytesPerSecond = c.value(.peakBytesPerSecond)
+        diskBytesPerSecond = c.value(.diskBytesPerSecond); percent = c.value(.percent); secondsRemaining = c.value(.secondsRemaining)
+        startTime = c.value(.startTime); isInstall = c.value(.isInstall); isWorkshop = c.value(.isWorkshop); isShader = c.value(.isShader)
+        stages = c.list(.stages)
+    }
+}
+
+extension SteamUI.Overview.Stage {
+    enum CodingKeys: String, CodingKey { case done, total }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        done = c.value(.done); total = c.value(.total)
+    }
+}
+
+extension SteamUI.Sample {
+    enum CodingKeys: String, CodingKey { case time, network, disk }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        time = c.value(.time); network = c.value(.network); disk = c.value(.disk)
+    }
+}
+
+extension SteamUI.Install {
+    enum CodingKeys: String, CodingKey { case appid, state, required, available, error, step, problem, done, eulas, keys }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appid = c.value(.appid); state = c.value(.state); required = c.value(.required); available = c.value(.available)
+        error = c.value(.error); step = c.optional(.step); problem = c.optional(.problem); done = c.value(.done)
+        eulas = c.optionalList(.eulas); keys = c.optionalList(.keys)
+    }
+}
+
+extension SteamUI.Install.Eula {
+    enum CodingKeys: String, CodingKey { case id, url, version, title, content }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); url = c.value(.url); version = c.value(.version); title = c.optional(.title); content = c.optional(.content)
+    }
+}
+
+extension SteamUI.Install.Key {
+    enum CodingKeys: String, CodingKey { case appid, name, key }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appid = c.value(.appid); name = c.value(.name); key = c.value(.key)
+    }
+}
+
+extension SteamUI.Folder {
+    enum CodingKeys: String, CodingKey { case index, path, free, capacity, isDefault }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        index = c.value(.index); path = c.value(.path); free = c.value(.free); capacity = c.value(.capacity); isDefault = c.value(.isDefault)
+    }
+}
+
+extension SteamUI.Account {
+    enum CodingKeys: String, CodingKey { case persona, accountName, steamID, wallet, personaState, avatar }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        persona = c.value(.persona); accountName = c.value(.accountName); steamID = c.value(.steamID); wallet = c.value(.wallet)
+        personaState = c.value(.personaState); avatar = c.optional(.avatar)
+    }
+}
+
+extension SteamUI.ChatSummary {
+    enum CodingKeys: String, CodingKey { case steamID, unread, lastTime, last }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        steamID = c.value(.steamID); unread = c.value(.unread); lastTime = c.value(.lastTime); last = c.value(.last)
+    }
+}
+
+extension SteamUI.ChatMessage {
+    enum CodingKeys: String, CodingKey { case fromMe, text, time, failed }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fromMe = c.value(.fromMe); text = c.value(.text); time = c.value(.time); failed = c.value(.failed)
+    }
+}
+
+extension SteamUI.Notification {
+    enum CodingKeys: String, CodingKey { case id, type, time, read, count, body }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); type = c.value(.type); time = c.value(.time); read = c.value(.read); count = c.value(.count); body = c.value(.body)
+    }
+}
+
+extension SteamUI.Snapshot {
+    enum CodingKeys: String, CodingKey {
+        case loggedIn, account, downloadsPaused, downloads, overview, history, install, uninstallRequest, running, folders, apps
+        case detached, shelves, chats, unreadNotifications
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        loggedIn = c.value(.loggedIn); account = c.optional(.account); downloadsPaused = c.value(.downloadsPaused)
+        downloads = c.list(.downloads); overview = c.optional(.overview); history = c.list(.history); install = c.optional(.install)
+        uninstallRequest = c.optionalList(.uninstallRequest); running = c.optionalList(.running); folders = c.list(.folders)
+        apps = c.optionalList(.apps); detached = c.list(.detached); shelves = c.optional(.shelves)
+        chats = c.optionalList(.chats); unreadNotifications = c.optional(.unreadNotifications)
+    }
+}
+
+extension SteamUI.Shelves {
+    enum CodingKeys: String, CodingKey { case favorites, hidden, collections }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        favorites = c.list(.favorites); hidden = c.list(.hidden); collections = c.list(.collections)
+    }
+}
+
+extension SteamUI.Shelves.Collection {
+    enum CodingKeys: String, CodingKey { case id, name, apps, dynamic }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); name = c.value(.name); apps = c.list(.apps); dynamic = c.value(.dynamic)
+    }
+}
+
+extension SteamUI.AppDetails {
+    enum CodingKeys: String, CodingKey {
+        case appid, name, installed, launchOptions, languages, selectedLanguage, cloudAvailable, cloudEnabledForAccount
+        case cloudEnabled, cloudUsed, cloudFree, autoUpdate, backgroundDownloads, diskUsage, dlcUsage, buildID, lastUpdated
+        case installFolder, installFolderIndex, thirdPartyUpdater, betas, selectedBeta, hasPrivateBetas, dlc, developer, homepage
+        case playtimeMinutes, lastPlayed, workshopVisible
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appid = c.value(.appid); name = c.value(.name); installed = c.value(.installed); launchOptions = c.value(.launchOptions)
+        languages = c.list(.languages); selectedLanguage = c.value(.selectedLanguage)
+        cloudAvailable = c.value(.cloudAvailable); cloudEnabledForAccount = c.value(.cloudEnabledForAccount); cloudEnabled = c.value(.cloudEnabled)
+        cloudUsed = c.value(.cloudUsed); cloudFree = c.value(.cloudFree); autoUpdate = c.value(.autoUpdate); backgroundDownloads = c.value(.backgroundDownloads)
+        diskUsage = c.value(.diskUsage); dlcUsage = c.value(.dlcUsage); buildID = c.value(.buildID); lastUpdated = c.value(.lastUpdated)
+        installFolder = c.value(.installFolder); installFolderIndex = c.optional(.installFolderIndex) ?? -1; thirdPartyUpdater = c.value(.thirdPartyUpdater)
+        betas = c.list(.betas); selectedBeta = c.optional(.selectedBeta) ?? "public"; hasPrivateBetas = c.value(.hasPrivateBetas)
+        dlc = c.list(.dlc); developer = c.value(.developer); homepage = c.value(.homepage)
+        playtimeMinutes = c.value(.playtimeMinutes); lastPlayed = c.value(.lastPlayed); workshopVisible = c.value(.workshopVisible)
+    }
+}
+
+extension SteamUI.AppDetails.Language {
+    enum CodingKeys: String, CodingKey { case id, name }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); name = c.value(.name)
+    }
+}
+
+extension SteamUI.AppDetails.Beta {
+    enum CodingKeys: String, CodingKey { case name, description, lastUpdated }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = c.value(.name); description = c.value(.description); lastUpdated = c.value(.lastUpdated)
+    }
+}
+
+extension SteamUI.AppDetails.DLC {
+    enum CodingKeys: String, CodingKey { case id, name, state, enabled, size }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); name = c.value(.name); state = c.value(.state); enabled = c.value(.enabled); size = c.value(.size)
+    }
+}
+
+extension SteamUI.Settings {
+    enum CodingKeys: String, CodingKey {
+        case downloadRegion, regions, throttleKbps, rateInBits, restrictAutoUpdates, restrictStart, restrictEnd
+        case downloadWhilePlaying, throttleWhileStreaming, shaderPrecache, peerContent, cloudEnabled, language, languages, folders
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        downloadRegion = c.value(.downloadRegion); regions = c.list(.regions); throttleKbps = c.value(.throttleKbps); rateInBits = c.value(.rateInBits)
+        restrictAutoUpdates = c.value(.restrictAutoUpdates); restrictStart = c.value(.restrictStart); restrictEnd = c.value(.restrictEnd)
+        downloadWhilePlaying = c.value(.downloadWhilePlaying); throttleWhileStreaming = c.value(.throttleWhileStreaming)
+        shaderPrecache = c.value(.shaderPrecache); peerContent = c.value(.peerContent); cloudEnabled = c.value(.cloudEnabled)
+        language = c.value(.language); languages = c.list(.languages); folders = c.list(.folders)
+    }
+}
+
+extension SteamUI.Settings.Region {
+    enum CodingKeys: String, CodingKey { case id, name }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); name = c.value(.name)
+    }
+}
+
+extension SteamUI.Achievement {
+    enum CodingKeys: String, CodingKey { case id, name, description, achieved, unlockTime, icon, hidden, globalPercent }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); name = c.value(.name); description = c.value(.description); achieved = c.value(.achieved)
+        unlockTime = c.value(.unlockTime); icon = c.optional(.icon); hidden = c.value(.hidden); globalPercent = c.value(.globalPercent)
+    }
+}
+
+extension SteamUI.Friend {
+    enum CodingKeys: String, CodingKey { case steamID, name, state, gameName, gameAppID, avatar, lastOnline }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        steamID = c.value(.steamID); name = c.value(.name); state = c.value(.state); gameName = c.value(.gameName)
+        gameAppID = c.value(.gameAppID); avatar = c.optional(.avatar); lastOnline = c.value(.lastOnline)
+    }
+}
+
+/// Serializes connection setup; hands out the open connection.
+private actor Link {
+    private var current: CDPConnection?
+    private var opening: Task<CDPConnection, Error>?
+
+    nonisolated var isOpen: Bool { openFlag.value }
+    private let openFlag = Flag()
+
+    func connection(_ ui: SteamUI) async throws -> CDPConnection {
+        if let c = current, !c.isClosed { return c }
+        if let opening { return try await opening.value }
+        let task = Task { try await ui.open() }
+        opening = task
+        defer { opening = nil }
+        do {
+            let c = try await task.value
+            current = c
+            // A socket that dropped before onClose was set is caught by isClosed.
+            c.onClose = { [openFlag] in openFlag.value = false }
+            openFlag.value = !c.isClosed
+            return c
+        } catch {
+            openFlag.value = false
+            throw error
+        }
+    }
+}
+
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v = false
+    var value: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return v }
+        set { lock.lock(); v = newValue; lock.unlock() }
+    }
+}
+
+private final class Subscriber: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (@Sendable (SteamUI.Snapshot) -> Void)?
+    func set(_ h: @escaping @Sendable (SteamUI.Snapshot) -> Void) { lock.lock(); handler = h; lock.unlock() }
+    func deliver(_ s: SteamUI.Snapshot) { lock.lock(); let h = handler; lock.unlock(); h?(s) }
+}
+
+/// A CEF DevTools websocket with request/response matching and event delivery.
+final class CDPConnection: @unchecked Sendable {
+    private let task: URLSessionWebSocketTask
+    private let lock = NSLock()
+    private var nextID = 1
+    private var waiters: [Int: CheckedContinuation<[String: Any], Error>] = [:]
+    private var closed = false
+    private var eventHandler: (@Sendable (String, [String: Any]) -> Void)?
+    private var closeHandler: (@Sendable () -> Void)?
+
+    // Set on the caller's thread, read on URLSession's.
+    var onEvent: (@Sendable (String, [String: Any]) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return eventHandler }
+        set { lock.lock(); eventHandler = newValue; lock.unlock() }
+    }
+    var onClose: (@Sendable () -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return closeHandler }
+        set { lock.lock(); closeHandler = newValue; lock.unlock() }
+    }
+
+    var isClosed: Bool { lock.lock(); defer { lock.unlock() }; return closed }
+
+    init(url: URL, session: URLSession) {
+        task = session.webSocketTask(with: url)
+        task.maximumMessageSize = 64 << 20
+        task.resume()
+        receive()
+    }
+
+    deinit { task.cancel(with: .goingAway, reason: nil) }
+
+    private func receive() {
+        task.receive { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case let .success(message):
+                let data: Data
+                switch message {
+                case let .string(s): data = Data(s.utf8)
+                case let .data(d): data = d
+                @unknown default: data = Data()
+                }
+                self.handle(data)
+                self.receive()
+            case let .failure(error):
+                self.close(error)
+            }
+        }
+    }
+
+    private func handle(_ data: Data) {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if let id = obj["id"] as? Int {
+            lock.lock(); let waiter = waiters.removeValue(forKey: id); lock.unlock()
+            if let error = obj["error"] as? [String: Any] {
+                waiter?.resume(throwing: SteamUI.Failure.script(error["message"] as? String ?? "\(error)"))
+            } else {
+                waiter?.resume(returning: obj["result"] as? [String: Any] ?? [:])
+            }
+        } else if let method = obj["method"] as? String {
+            onEvent?(method, obj["params"] as? [String: Any] ?? [:])
+        }
+    }
+
+    /// A call that awaits a promise may legitimately run long, so its timeout only fails that call; any
+    /// other call timing out means the session is dead, and closing it makes the next call reconnect.
+    func call(_ method: String, _ params: [String: Any], timeout: TimeInterval = 45) async throws -> [String: Any] {
+        let closeOnTimeout = params["awaitPromise"] as? Bool != true
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[String: Any], Error>) in
+            lock.lock()
+            if closed { lock.unlock(); cont.resume(throwing: SteamUI.Failure.unreachable); return }
+            let id = nextID
+            nextID += 1
+            waiters[id] = cont
+            lock.unlock()
+            guard let data = try? JSONSerialization.data(withJSONObject: ["id": id, "method": method, "params": params]) else {
+                fail(id, SteamUI.Failure.badReply); return
+            }
+            task.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] error in
+                if let error { self?.fail(id, error) }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
+                guard let self else { return }
+                self.lock.lock(); let pending = self.waiters[id] != nil; self.lock.unlock()
+                guard pending else { return }
+                if closeOnTimeout { self.close(SteamUI.Failure.timeout) } else { self.fail(id, SteamUI.Failure.timeout) }
+            }
+        }
+    }
+
+    private func fail(_ id: Int, _ error: Error) {
+        lock.lock(); let waiter = waiters.removeValue(forKey: id); lock.unlock()
+        waiter?.resume(throwing: error)
+    }
+
+    func close(_ error: Error?) {
+        lock.lock()
+        let wasClosed = closed
+        closed = true
+        let pending = waiters
+        waiters = [:]
+        let handler = closeHandler
+        lock.unlock()
+        guard !wasClosed else { return }
+        task.cancel(with: .normalClosure, reason: nil)
+        for w in pending.values { w.resume(throwing: error ?? SteamUI.Failure.unreachable) }
+        handler?()
+    }
+}

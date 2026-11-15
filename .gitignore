@@ -1,0 +1,46 @@
+# Build output
+.build/
+build/
+DerivedData/
+*.o
+*.obj
+*.dylib
+*.dll
+*.exe
+*.lib
+*.a
+*.pcm
+*.swiftmodule/
+*.swiftdoc
+*.swiftsourceinfo
+*.swiftdeps
+
+# Generated test output and caches
+out/
+*.bgra
+*.dxvk-cache
+*.priors
+
+# macOS
+.DS_Store
+
+# Secrets
+.env
+.env.*
+*.pem
+*.p12
+*.key
+
+# Local Claude Code state
+.claude/settings.local.json
+.claude/auto-push.log
+
+# Local tooling and SwiftPM state
+.claude/
+.swiftpm/
+Package.resolved
+
+# Test binaries built by Boost/build.sh
+Boost/test/harness
+Boost/test/harness_x86
+Boost/test/offscreen_check
