@@ -16,10 +16,8 @@ struct GameDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             Hero(game: game, installs: installs)
             VStack(alignment: .leading, spacing: 40) {
-                GamePageSections(appid: game.appid, open: { url in
-                    app.storeModel.go(url.absoluteString)
-                    app.destination = .store
-                }, openProperties: { app.properties = game.appid })
+                GamePageSections(appid: game.appid, open: app.open, openProperties: { app.properties = game.appid })
+                NewsSection(appid: game.appid) { app.show(.news(game.appid)) }
                 DetailBody(game: game)
                 AchievementsSection(appid: game.appid)
             }

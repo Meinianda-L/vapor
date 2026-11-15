@@ -77,6 +77,91 @@ final class AppState: ObservableObject {
     @Published var search = ""
     /// The game whose Properties sheet is open.
     @Published var properties: UInt32?
+    /// Native pages opened over the current screen, newest last; back pops one.
+    @Published var pages: [NativePage] = []
+    /// A friend whose chat the friends list opens with.
+    @Published var chatWith: String?
+    /// Steam web pages that have no native screen open here, over the content, not in the store tab.
+    let web = WebPanelModel()
+
+    init() {
+        web.onSteamApp = { [weak self] id in self?.showGame(id) }
+    }
+
+    /// Where every link in the app goes: a native page when one draws that URL, the web panel for
+    /// other Steam pages, the default browser for anything else. A URL for the page already on screen
+    /// (its "open in Steam" link) goes to the web panel.
+    func open(_ url: URL) {
+        switch SteamLink(url) {
+        case let .play(id), let .install(id): showGame(id); return
+        case let .page(page): return open(page)
+        case let .external(external): NSWorkspace.shared.open(external); return
+        case .ignore: if !SteamLink.isWeb(url) { return }
+        }
+        if let page = NativePage(url), page != pages.last {
+            web.close()
+            pages.append(page)
+        } else if SteamLink.isSteamWeb(url) {
+            web.open(url)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func show(_ page: NativePage) {
+        web.close()
+        if page != pages.last { pages.append(page) }
+    }
+
+    func back() { _ = pages.popLast() }
+
+    /// The game's library page when it is in the library, otherwise its store page.
+    func showGame(_ appid: UInt32) {
+        web.close()
+        if store.games.contains(where: { $0.appid == appid }) {
+            pages = []
+            if !(destination?.isPlainShelf ?? false) { destination = .all }
+            selectedID = appid
+        } else {
+            show(.store(appid))
+        }
+    }
+
+    func chat(with steamID: String) {
+        web.close()
+        pages = []
+        chatWith = steamID
+        destination = .friends
+    }
+
+    /// A sidebar pick leaves whatever was open on top.
+    func go(_ d: Destination) {
+        web.close()
+        pages = []
+        destination = d
+        selectedID = nil
+    }
+}
+
+/// Screens Vapor draws itself for what would otherwise be a Steam web page.
+enum NativePage: Hashable {
+    case store(UInt32)
+    case news(UInt32)
+    case profile(String)
+
+    /// store.steampowered.com/app/<id>, …/news/app/<id>, steamcommunity.com/profiles/<steamid64>.
+    init?(_ url: URL) {
+        guard SteamLink.isSteamWeb(url), let host = url.host?.lowercased() else { return nil }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        if host == "store.steampowered.com" {
+            if parts.count >= 2, parts[0] == "app", let id = UInt32(parts[1]) { self = .store(id); return }
+            if parts.count >= 3, parts[0] == "news", parts[1] == "app", let id = UInt32(parts[2]) { self = .news(id); return }
+        } else if host == "steamcommunity.com", parts.count == 2, parts[0] == "profiles",
+                  parts[1].count == 17, parts[1].allSatisfy(\.isNumber) {
+            self = .profile(parts[1]); return
+        }
+        return nil
+    }
 }
 
 struct RootView: View {
@@ -97,9 +182,10 @@ struct RootView: View {
                 .frame(width: 216)
             Rectangle().fill(Theme.hairline).frame(width: 1)
             detail
-                .disabled(signingIn)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.background)
+                .overlay { WebPanel(model: state.web) }
+                .disabled(signingIn)
                 .overlay { if signingIn { LoginView() } }
         }
         .background(Theme.background)
@@ -156,6 +242,26 @@ struct RootView: View {
     }
 
     @ViewBuilder private var detail: some View {
+        if let page = state.pages.last {
+            nativePage(page).id(page)
+        } else {
+            destinationView
+        }
+    }
+
+    @ViewBuilder private func nativePage(_ page: NativePage) -> some View {
+        switch page {
+        case let .store(id):
+            StorePageView(appid: id, open: state.open, onClose: state.back)
+        case let .news(id):
+            NewsView(appid: id, open: state.open, onClose: state.back)
+        case let .profile(id):
+            ProfileView(steamID: id, open: state.open, openGame: state.showGame, onClose: state.back,
+                        openChat: { state.chat(with: $0) })
+        }
+    }
+
+    @ViewBuilder private var destinationView: some View {
         switch state.destination ?? .all {
         case .store:
             StoreView(store: state.storeModel, library: store) { game in
@@ -163,10 +269,8 @@ struct RootView: View {
                 state.selectedID = game.appid
             }
         case .friends:
-            FriendsView { steamID in
-                state.storeModel.go("https://steamcommunity.com/profiles/\(steamID)/")
-                state.destination = .store
-            }
+            FriendsView(openProfile: { state.show(.profile($0)) }, chatWith: state.chatWith)
+                .onAppear { state.chatWith = nil }
         case .downloads: DownloadsView(installs: store.installs)
         case .runtimes: RuntimesView()
         case .settings: SettingsView()
@@ -207,7 +311,7 @@ struct Sidebar: View {
             group("游戏库", [.all, .installed, .windows, .mac] + collections + (hasHidden ? [.hidden] : []), counts: true)
             group("Vapor", [.runtimes, .settings], counts: false)
             Spacer()
-            AccountMenu(openProfile: { id in open("https://steamcommunity.com/profiles/\(id)/") },
+            AccountMenu(openProfile: { state.show(.profile($0)) },
                         openAccount: { open("https://store.steampowered.com/account/") })
         }
         .padding(.top, 52)          // clear the window's traffic lights
@@ -222,8 +326,7 @@ struct Sidebar: View {
     }
 
     private func open(_ address: String) {
-        state.storeModel.go(address)
-        state.destination = .store
+        if let url = URL(string: address) { state.open(url) }
     }
 
     private func group(_ title: String, _ items: [Destination], counts: Bool) -> some View {
@@ -233,9 +336,8 @@ struct Sidebar: View {
                 SidebarRow(destination: d, title: d.title(in: engine.shelves),
                            badge: d == .friends ? engine.unreadChats : 0,
                            count: counts ? store.games.filter { d.matches($0, shelves: engine.shelves) }.count : nil,
-                           selected: state.destination == d) {
-                    state.destination = d
-                    state.selectedID = nil
+                           selected: state.destination == d && state.pages.isEmpty) {
+                    state.go(d)
                 }
             }
         }

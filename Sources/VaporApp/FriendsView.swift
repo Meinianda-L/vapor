@@ -8,6 +8,11 @@ struct FriendsView: View {
     /// Called with the friend's steamID64 from a row's profile action.
     var openProfile: (String) -> Void = { _ in }
 
+    init(openProfile: @escaping (String) -> Void = { _ in }, chatWith: String? = nil) {
+        self.openProfile = openProfile
+        _chatID = State(initialValue: chatWith)
+    }
+
     @State private var friends: [SteamUI.Friend]?
     @State private var failed = false
     @State private var query = ""
