@@ -85,6 +85,18 @@ enum Snapshot {
         print("store probe:", probe ?? "nil")
         RunLoop.current.run(until: Date().addingTimeInterval(1))
         capture(state, to: dir.appendingPathComponent("store.png"), web: sm.webView)
+        // Native pages load in the view's task; fetch first so the capture shows the page, not its skeleton.
+        for (name, appid) in [("storepage-owned.png", UInt32(730)), ("storepage.png", UInt32(1091500))] {
+            var page: StorePage??
+            Task { page = .some(await StorePageCache.shared.page(appid)) }
+            spin(25) { page != nil }
+            guard page??.name != nil else { skip(name, "the store page for \(appid) did not load"); continue }
+            state.pages = [.store(appid)]
+            capture(state, to: dir.appendingPathComponent(name), size: NSSize(width: 1320, height: 1100))
+        }
+        state.pages = []
+        capture(state, to: dir.appendingPathComponent("onboarding.png"),
+                root: AnyView(OnboardingView(model: OnboardingModel(persist: false)) {}.background(Theme.background)))
         state.destination = .runtimes
         capture(state, to: dir.appendingPathComponent("runtimes.png"))
         state.destination = .settings

@@ -209,6 +209,7 @@ struct RootView: View {
         .tint(Theme.accent)
         .environmentObject(engine)
         .environmentObject(state)
+        .environment(\.openURL, OpenURLAction { state.open($0); return .handled })
         .sheet(item: Binding(get: { state.properties.map { PropertiesRef(id: $0) } }, set: { state.properties = $0?.id })) { ref in
             PropertiesSheet(appid: ref.id) { state.properties = nil }.environmentObject(engine)
         }
@@ -267,7 +268,8 @@ struct RootView: View {
     @ViewBuilder private func nativePage(_ page: NativePage) -> some View {
         switch page {
         case let .store(id):
-            StorePageView(appid: id, open: state.open, onClose: state.back, openGame: state.showGame)
+            StorePageView(appid: id, open: state.open, onClose: state.back, openGame: state.showGame,
+                          inLibrary: store.games.contains { $0.appid == id })
         case let .news(id):
             NewsView(appid: id, open: state.open, onClose: state.back)
         case let .profile(id):

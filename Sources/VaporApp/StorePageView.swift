@@ -150,6 +150,8 @@ struct StorePageView: View {
     var open: (URL) -> Void = { _ in }
     var onClose: () -> Void = {}
     var openGame: (UInt32) -> Void = { _ in }
+    /// In Vapor's library; Steam's own list only covers it while the client is up.
+    var inLibrary = false
     @EnvironmentObject var engine: EngineModel
 
     @State private var page: StorePage?
@@ -325,6 +327,8 @@ struct StorePageView: View {
                     actionButton("安装", prominent: true) { installing = true }
                         .disabled(engine.steam == nil || engine.busy)
                 }
+                Button("在库中查看") { openGame(appid) }.buttonStyle(.link).font(.system(size: 12.5))
+            } else if inLibrary {
                 Button("在库中查看") { openGame(appid) }.buttonStyle(.link).font(.system(size: 12.5))
             } else {
                 if let price = p.price {
