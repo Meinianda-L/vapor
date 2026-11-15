@@ -49,8 +49,12 @@ public final class SteamUI: @unchecked Sendable {
     // MARK: - CDP transport
 
     public func targets() async throws -> [Target] {
-        guard let (data, _) = try? await session.data(from: URL(string: "http://127.0.0.1:\(port)/json")!) else { throw Failure.unreachable }
-        return try JSONDecoder().decode([Target].self, from: data)
+        // Steam's own restarts (account switch, sign-out) may drop -devtools-port; it then listens on 8080.
+        for p in port == 8080 ? [port] : [port, 8080] {
+            if let (data, _) = try? await session.data(from: URL(string: "http://127.0.0.1:\(p)/json")!),
+               let list = try? JSONDecoder().decode([Target].self, from: data) { return list }
+        }
+        throw Failure.unreachable
     }
 
     /// One CDP command. SharedJSContext goes over the persistent connection; other targets get a
@@ -294,6 +298,57 @@ public final class SteamUI: @unchecked Sendable {
         public let body: String           // the notification's JSON payload, as Steam sends it
     }
 
+    /// A Steam account remembered on this machine (the client's account chooser).
+    public struct LoginUser: Decodable, Sendable, Equatable, Identifiable {
+        public let accountName: String
+        public let persona: String
+        public let avatar: URL?
+        public let remember: Bool
+        public let lastLogin: Int
+        public var id: String { accountName }
+    }
+
+    /// A sign-in in progress, driven through Steam's own authentication service.
+    public struct Login: Decodable, Sendable, Equatable {
+        public let kind: String               // "qr" or "password"
+        public let status: String             // starting, waiting, signingIn, done, failed
+        public let challengeURL: String?      // QR: encode this; it changes while the code is shown
+        public let account: String?
+        public let confirmations: [Int]       // EAuthSessionGuardType: 2 email code, 3 mobile code, 4 approve in app, 5 email link
+        public let eresult: Int               // non-1 when a step failed (5 wrong password, 65 wrong code, 84 rate limited …)
+        public let failure: Int               // EFailureState of the session: 2 expired, 3 network, 5 rate limited
+        public let remote: Bool               // the QR code was scanned; waiting for approval on the phone
+
+        public var needsCode: Bool { confirmations.contains(3) || confirmations.contains(2) }
+        public var codeType: Int { confirmations.contains(3) ? 3 : 2 }
+    }
+
+    public func loginUsers() async throws -> [LoginUser] {
+        try JSONDecoder().decode(Lossy.List<LoginUser>.self, from: try await agent("loginUsers()")).items
+    }
+    public func startQRLogin() async throws -> Login {
+        try JSONDecoder().decode(Login.self, from: try await agent("loginQR()"))
+    }
+    /// The password goes straight into Steam's RSA-encrypted credentials request; Vapor keeps no copy.
+    public func startPasswordLogin(account: String, password: String, remember: Bool) async throws -> Login {
+        try JSONDecoder().decode(Login.self, from: try await agent("loginPassword(\(literal(account)), \(literal(password)), \(remember))"))
+    }
+    /// Steam Guard code from the mobile app (type 3) or the e-mail (type 2). Returns Steam's EResult.
+    public func submitSteamGuardCode(_ code: String, type: Int) async throws -> Int {
+        try JSONDecoder().decode(Int.self, from: try await agent("loginCode(\(literal(code)), \(type))"))
+    }
+    public func cancelLogin() async throws { _ = try await agent("loginCancel()") }
+    @discardableResult public func hideSteamLoginWindow() async throws -> Bool {
+        try JSONDecoder().decode(Bool.self, from: try await agent("hideLoginWindow()"))
+    }
+    /// Account switching restarts the client with `restartArgs` (keep it headless and reachable).
+    public func switchUser(_ account: String, restartArgs: String) async throws {
+        _ = try await agent("switchUser(\(literal(account)), \(literal(restartArgs)))")
+    }
+    public func signOut(restartArgs: String) async throws { _ = try await agent("signOut(\(literal(restartArgs)))") }
+    public func addAccount(restartArgs: String) async throws { _ = try await agent("addAccount(\(literal(restartArgs)))") }
+    public func forgetUser(_ account: String) async throws { _ = try await agent("forgetUser(\(literal(account)))") }
+
     /// Messages with one friend, loading Steam's chat history on first use.
     public func chat(with steamID: String) async throws -> [ChatMessage] {
         try JSONDecoder().decode(Lossy.List<ChatMessage>.self, from: try await agent("chat(\(literal(steamID)))")).items
@@ -323,6 +378,7 @@ public final class SteamUI: @unchecked Sendable {
         public let shelves: Shelves?             // favourites, hidden and user collections; sent with `apps`
         public let chats: [ChatSummary]?         // friend conversations with history or unread messages
         public let unreadNotifications: Int?
+        public let login: Login?                 // a Vapor-driven sign-in in progress
     }
 
     /// The library's own organisation (collectionStore), synced by Steam across devices.
@@ -558,7 +614,7 @@ public final class SteamUI: @unchecked Sendable {
 
     // MARK: - Agent
 
-    static let agentVersion = 13
+    static let agentVersion = 14
 
     /// Replaces the agent only when it is another version and idle: every client shares one agent, and an
     /// install or probe in flight must keep the agent that is driving it.
@@ -822,6 +878,132 @@ public final class SteamUI: @unchecked Sendable {
                    .map(c => ({ id: String(c.id), name: c.displayName || '', apps: ids(c), dynamic: !!c.bIsDynamic })) };
       };
 
+      // --- sign-in: Steam's login page flow (QR and password), rebuilt from the parts it is made of -----
+      // The login page's session classes are not exported, but their base class, the service calls and
+      // messages are; the module ids are read from the QR class's own imports so they survive updates.
+      let kit = null;
+      const authKit = () => {
+        if (kit) return kit;
+        if (!req && window.webpackChunksteamui) { pushed = true; window.webpackChunksteamui.push([[Symbol('vapor-auth')], {}, r => { req = r; }]); }
+        if (!req) return null;
+        const src = id => String(req.m[id]);
+        const qrId = Object.keys(req.m).find(id => src(id).includes('GetChallengeURL(){return this.m_strChallengeURL}'));
+        if (!qrId) return null;
+        const s = src(qrId), vars = {};
+        for (const m of s.matchAll(/(\w+)=t\((\d+)\)/g)) vars[m[1]] = m[2];
+        const base = s.match(/extends (\w+)\.(\w+)\{/), wrap = s.match(/(\w+)\.(\w+)\.Init\((\w+)\.(\w+)\)/),
+              emsg = s.match(/SetEMsg\((\w+)\.(\w+)\)/), svc = s.match(/(\w+)\.(\w+)\.BeginAuthSessionViaQR/),
+              site = s.match(/set_website_id\((\w+)\.(\w+)\.WEBSITE_ID\)/);
+        if (!base || !wrap || !emsg || !svc || !site) return null;
+        const msgs = req(vars[svc[1]]);
+        const cls = name => Object.values(msgs).find(v => typeof v === 'function' && g(() => v.prototype.getClassName()) === name);
+        const connId = Object.keys(req.m).find(id => /OnSharedConnectionEstablished/.test(src(id)) && /GetServiceTransport\(\)\{/.test(src(id)));
+        const rsaId = Object.keys(req.m).find(id => src(id).includes('publickey_mod') && src(id).includes('RSAKey'));
+        const k = {
+          Base: req(vars[base[1]])[base[2]], Msg: req(vars[wrap[1]])[wrap[2]], EMsg: req(vars[emsg[1]])[emsg[2]], svc: msgs[svc[2]],
+          website: g(() => req(vars[site[1]])[site[2]].WEBSITE_ID),
+          QR: cls('CAuthentication_BeginAuthSessionViaQR_Request'), Cred: cls('CAuthentication_BeginAuthSessionViaCredentials_Request'),
+          RSA: cls('CAuthentication_GetPasswordRSAPublicKey_Request'), Code: cls('CAuthentication_UpdateAuthSessionWithSteamGuardCode_Request'),
+          Conn: connId && Object.values(req(connId)).find(v => typeof v === 'function' && v.prototype?.GetServiceTransport && v.prototype?.OnSharedConnectionEstablished),
+          encrypt: rsaId && Object.values(req(rsaId)).find(v => typeof v === 'function' && String(v).includes('publickey_mod')),
+        };
+        if (!Object.values(k).every(Boolean)) return null;
+        // What the client's own login page sends as device details (platform 1 = Steam client).
+        const device = async () => {
+          const [os, info, host, machine] = await Promise.all([SteamClient.System.GetOSType(), SteamClient.System.GetSystemInfo(),
+            g(() => SteamClient.Auth.GetLocalHostname()) ?? '', g(() => SteamClient.Auth.GetMachineID())]);
+          return { os_type: os, device_friendly_name: host, machine_id: machine, platform_type: 1, gaming_device_type: info?.eGamingDeviceType };
+        };
+        const begin = (session, msg) => {
+          const o = msg.Body().toObject();
+          session.m_strClientID = o.client_id; session.m_rgRequestID = o.request_id; session.m_msPollInterval = num(o.interval) * 1000;
+          return o;
+        };
+        k.QRSession = class extends k.Base {
+          async Start() {
+            await this.m_transport.MakeReady();
+            const m = k.Msg.Init(k.QR); m.SetEMsg(k.EMsg);
+            m.Body().set_device_details(await this.GetDeviceDetails());
+            m.Body().set_website_id(k.website);
+            const r = await k.svc.BeginAuthSessionViaQR(this.m_transport, m);
+            if (r.GetEResult() !== 1) return r.GetEResult();
+            this.m_strChallengeURL = begin(this, r).challenge_url;
+            this.StartPolling(false);
+            return 1;
+          }
+        };
+        k.PasswordSession = class extends k.Base {
+          async Start(account, password, remember) {
+            await this.m_transport.MakeReady();
+            const q = k.Msg.Init(k.RSA); q.SetEMsg(k.EMsg); q.Body().set_account_name(account);
+            const kr = await k.svc.GetPasswordRSAPublicKey(this.m_transport, q);
+            if (kr.GetEResult() !== 1) return kr.GetEResult();
+            const key = kr.Body().toObject();
+            const m = k.Msg.Init(k.Cred); m.SetEMsg(k.EMsg);
+            const b = m.Body();
+            b.set_account_name(account); b.set_encrypted_password(k.encrypt(password, key)); b.set_encryption_timestamp(key.timestamp);
+            b.set_remember_login(!!remember); b.set_persistence(remember ? 1 : 0); b.set_website_id(k.website);
+            b.set_device_details(await this.GetDeviceDetails());
+            const guard = await g(() => SteamClient.Auth.GetSteamGuardData(account));
+            if (guard?.eresult === 1 && guard.data) b.set_guard_data(guard.data);
+            const r = await k.svc.BeginAuthSessionViaCredentials(this.m_transport, m);
+            if (r.GetEResult() !== 1) return r.GetEResult();
+            const o = begin(this, r);
+            this.steamid = o.steamid;
+            this.confirmations = (o.allowed_confirmations || []).map(c => num(c.confirmation_type));
+            this.StartPolling(false);
+            return 1;
+          }
+          async SendCode(code, type) {
+            const m = k.Msg.Init(k.Code); m.SetEMsg(k.EMsg);
+            const b = m.Body();
+            b.set_client_id(this.m_strClientID); b.set_steamid(this.steamid); b.set_code(String(code)); b.set_code_type(type);
+            return (await k.svc.UpdateAuthSessionWithSteamGuardCode(this.m_transport, m)).GetEResult();
+          }
+        };
+        k.device = device;
+        return (kit = k);
+      };
+
+      // One sign-in at a time. status: starting, waiting (QR shown / approve on phone / code needed), signingIn, done, failed.
+      let login = null, loginSession = null, loginConn = null;
+      const endLogin = () => { g(() => loginSession?.StopPolling()); loginSession = null; g(() => loginConn?.Disconnect?.()); loginConn = null; };
+      const signIn = async r => {
+        if (!login) return;
+        if (!r?.bSuccess) { Object.assign(login, { status: 'failed', failure: num(g(() => loginSession.GetFailureState())) }); endLogin(); emit(); return; }
+        login.status = 'signingIn'; emit();
+        const res = await SteamClient.Auth.SetLoginToken(r.strRefreshToken, r.strAccountName);
+        if (r.strNewGuardData) await g(() => SteamClient.Auth.SetSteamGuardData(r.strAccountName, r.strNewGuardData));
+        Object.assign(login, { account: r.strAccountName, status: num(res?.result) === 1 ? 'done' : 'failed', eresult: num(res?.result) });
+        endLogin(); emit();
+      };
+      const startLogin = async (kind, start) => {
+        const k = authKit();
+        if (!k) throw new Error('Steam sign-in is not available');
+        endLogin();
+        login = { kind, status: 'starting', challengeURL: null, account: null, confirmations: [], eresult: 0, failure: 0 };
+        loginConn = new k.Conn();
+        const transport = loginConn.GetServiceTransport();
+        g(() => loginConn.Connect());
+        const session = kind === 'qr' ? new k.QRSession(transport, signIn, k.device) : new k.PasswordSession(transport, signIn, k.device);
+        loginSession = session;
+        const e = await start(session);
+        if (loginSession !== session) return login;
+        if (e !== 1) { Object.assign(login, { status: 'failed', eresult: e }); endLogin(); }
+        else Object.assign(login, { status: 'waiting', challengeURL: session.m_strChallengeURL ?? null, confirmations: session.confirmations ?? [] });
+        emit();
+        return login;
+      };
+      const loginState = () => login && { ...login, challengeURL: loginSession?.m_strChallengeURL ?? login.challengeURL,
+                                           remote: !!g(() => loginSession.BHadRemoteInteraction()) };
+      // The client's own login window stays hidden; Vapor shows its sign-in instead.
+      const hideLoginWindow = () => {
+        const wins = g(() => SteamUIStore.WindowStore.SteamUIWindows) || [];
+        let hidden = false;
+        for (const w of wins) if (g(() => w.IsDesktopLoginWindow())) { g(() => w.BrowserWindow.SteamClient.Window.HideWindow()); hidden = true; }
+        return hidden;
+      };
+
       const api = {
         version: \#(agentVersion),
         busy() { return !!probe || !!(run?.driven && !run.done); },
@@ -879,6 +1061,7 @@ public final class SteamUI: @unchecked Sendable {
             shelves: Array.isArray(all) ? g(shelves) ?? null : null,
             chats: g(chats) ?? null,
             unreadNotifications: g(() => trayEntries().filter(n => !n.read).reduce((s, n) => s + n.count, 0)) ?? null,
+            login: g(loginState) ?? null,
           };
         },
         async install(appid) {
@@ -924,6 +1107,28 @@ public final class SteamUI: @unchecked Sendable {
         move(appid, index) { SteamClient.Downloads.SetQueueIndex(appid, index, CLIENT); return true; },
         enableAll(on) { SteamClient.Downloads.EnableAllDownloads(on, CLIENT); return true; },
         showMain,
+        loginQR() { return startLogin('qr', s => s.Start()); },
+        loginPassword(account, password, remember) {
+          return startLogin('password', s => s.Start(String(account).trim(), String(password), !!remember));
+        },
+        async loginCode(code, type) {
+          if (!loginSession?.SendCode) throw new Error('no sign-in waiting for a code');
+          const e = await loginSession.SendCode(code, Number(type));
+          if (e !== 1 && login) login.eresult = e;
+          emit();
+          return e;
+        },
+        loginCancel() { endLogin(); login = null; emit(); return true; },
+        hideLoginWindow() { return hideLoginWindow(); },
+        async loginUsers() {
+          return ((await SteamClient.User.GetLoginUsers()) || []).map(u => ({ accountName: String(u.accountName || ''), persona: String(u.personaName || ''),
+            avatar: u.avatarUrl || null, remember: !!u.rememberPassword, lastLogin: num(u.rtLastLogin) }));
+        },
+        // These restart the client; the arguments keep it headless and reachable (Steam passes them on).
+        switchUser(account, args) { g(() => SteamClient.User.SetRestartArgs(String(args))); SteamClient.User.RestartAsUser(String(account)); return true; },
+        signOut(args) { g(() => SteamClient.User.SetRestartArgs(String(args))); SteamClient.User.SignOutAndRestart(); return true; },
+        addAccount(args) { g(() => SteamClient.User.SetRestartArgs(String(args))); SteamClient.User.RestartToLoginScreen(); return true; },
+        async forgetUser(account) { await SteamClient.User.RemoveUser(String(account)); return true; },
         async chat(sid) {
           const c = friendChat(sid, true);
           if (!c) return [];
@@ -1179,6 +1384,24 @@ extension SteamUI.Account {
     }
 }
 
+extension SteamUI.LoginUser {
+    enum CodingKeys: String, CodingKey { case accountName, persona, avatar, remember, lastLogin }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        accountName = c.value(.accountName); persona = c.value(.persona); avatar = c.optional(.avatar)
+        remember = c.value(.remember); lastLogin = c.value(.lastLogin)
+    }
+}
+
+extension SteamUI.Login {
+    enum CodingKeys: String, CodingKey { case kind, status, challengeURL, account, confirmations, eresult, failure, remote }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = c.value(.kind); status = c.value(.status); challengeURL = c.optional(.challengeURL); account = c.optional(.account)
+        confirmations = c.list(.confirmations); eresult = c.value(.eresult); failure = c.value(.failure); remote = c.value(.remote)
+    }
+}
+
 extension SteamUI.ChatSummary {
     enum CodingKeys: String, CodingKey { case steamID, unread, lastTime, last }
     public init(from decoder: Decoder) throws {
@@ -1206,7 +1429,7 @@ extension SteamUI.Notification {
 extension SteamUI.Snapshot {
     enum CodingKeys: String, CodingKey {
         case loggedIn, account, downloadsPaused, downloads, overview, history, install, uninstallRequest, running, folders, apps
-        case detached, shelves, chats, unreadNotifications
+        case detached, shelves, chats, unreadNotifications, login
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1215,6 +1438,7 @@ extension SteamUI.Snapshot {
         uninstallRequest = c.optionalList(.uninstallRequest); running = c.optionalList(.running); folders = c.list(.folders)
         apps = c.optionalList(.apps); detached = c.list(.detached); shelves = c.optional(.shelves)
         chats = c.optionalList(.chats); unreadNotifications = c.optional(.unreadNotifications)
+        login = c.optional(.login)
     }
 }
 

@@ -34,6 +34,11 @@ final class EngineModel: ObservableObject {
     @Published private(set) var downloadsPaused = false
     /// Favourites, hidden games and user collections, from Steam's own library (cloud-synced).
     @Published private(set) var shelves: SteamUI.Shelves?
+    /// The account chooser and a sign-in in progress; meaningful while Windows Steam waits for a login.
+    @Published private(set) var loginUsers: [SteamUI.LoginUser] = []
+    @Published private(set) var login: SteamUI.Login?
+    /// Steam's UI runtime is reachable (logged on or not); sign-in needs this, the store and library need `uiOnline`.
+    @Published private(set) var uiReachable = false
     /// Friend conversations with history or unread messages, and the notification tray's unread count.
     @Published private(set) var chats: [SteamUI.ChatSummary] = []
     @Published private(set) var unreadNotifications = 0
@@ -112,9 +117,12 @@ final class EngineModel: ObservableObject {
             if n != nativeSteamRunning { nativeSteamRunning = n }
             if c != connection { connection = c }
             if p != progress { progress = p }
+            // Signed out, Steam's UI runtime still runs (it hosts the login); keep the channel for Vapor's sign-in.
+            let reachable = steam.isRunning || isOnline ? (ui.isConnected ? true : await ui.connect()) : false
+            if reachable != uiReachable { uiReachable = reachable }
+            if needsSignIn && reachable { await prepareSignIn() }
             if isOnline {
-                let ok = ui.isConnected ? true : await ui.connect()
-                if ok != uiOnline, ok || !forcedUIOnline { uiOnline = ok }
+                if reachable != uiOnline, reachable || !forcedUIOnline { uiOnline = reachable }
             } else if !forcedUIOnline {
                 // `.starting` is a reconnect blip; the install run outlives it so its outcome is not re-reported.
                 clearUIState(keepInstall: c == .starting)
@@ -137,6 +145,7 @@ final class EngineModel: ObservableObject {
     }
 
     private func apply(_ s: SteamUI.Snapshot) {
+        if s.login != login { login = s.login }
         // The agent's heartbeat keeps pushing while the account is logged off; that must not revive the UI.
         guard isOnline || forcedUIOnline else { return }
         if !uiOnline { uiOnline = true }
@@ -404,6 +413,47 @@ final class EngineModel: ObservableObject {
         uiAction { try await $0.uninstall(appid) }
     }
 
+    // MARK: accounts
+
+    /// Windows Steam is up but nobody is signed in: Vapor's sign-in replaces the client's login window.
+    var needsSignIn: Bool {
+        switch connection {
+        case .needsLogin: return true
+        case .loggedOff: return !sessionReplaced
+        default: return false
+        }
+    }
+
+    /// What the client restarts with after a switch or sign-out, so it stays headless and reachable.
+    static let restartArgs = "-silent -no-cef-sandbox -devtools-port \(SteamUI.port)"
+
+    private func prepareSignIn() async {
+        _ = try? await ui.hideSteamLoginWindow()
+        if let users = try? await ui.loginUsers(), users != loginUsers { loginUsers = users }
+    }
+
+    func refreshLoginUsers() {
+        guard uiReachable || uiOnline else { return }
+        Task { if let users = try? await ui.loginUsers(), users != loginUsers { loginUsers = users } }
+    }
+
+    func startQRLogin() { uiAction(requiresLogin: false) { _ = try await $0.startQRLogin() } }
+    func startPasswordLogin(account: String, password: String, remember: Bool) {
+        uiAction(requiresLogin: false) { _ = try await $0.startPasswordLogin(account: account, password: password, remember: remember) }
+    }
+    func submitSteamGuardCode(_ code: String, type: Int) { uiAction(requiresLogin: false) { _ = try await $0.submitSteamGuardCode(code, type: type) } }
+    func cancelLogin() { uiAction(requiresLogin: false) { try await $0.cancelLogin() } }
+    func switchUser(_ account: String) { uiAction { try await $0.switchUser(account, restartArgs: Self.restartArgs) } }
+    func signOut() { uiAction { try await $0.signOut(restartArgs: Self.restartArgs) } }
+    func addAccount() { uiAction { try await $0.addAccount(restartArgs: Self.restartArgs) } }
+    func forgetUser(_ account: String) {
+        uiAction(requiresLogin: false) { ui in
+            try await ui.forgetUser(account)
+            let users = try await ui.loginUsers()
+            await MainActor.run { self.loginUsers = users }
+        }
+    }
+
     var unreadChats: Int { chats.reduce(0) { $0 + $1.unread } }
     func setPersonaState(_ state: Int) { uiAction { try await $0.setPersonaState(state) } }
 
@@ -450,8 +500,9 @@ final class EngineModel: ObservableObject {
 
     func showSteamWindow() { uiAction { try await $0.showSteamWindow(true) } }
 
-    func uiAction(_ body: @escaping (SteamUI) async throws -> Void) {
-        guard uiOnline else { alert = .message("Windows Steam 未运行。"); return }
+    /// Runs a Steam UI call; `requiresLogin: false` for the sign-in itself, which runs while signed out.
+    func uiAction(requiresLogin: Bool = true, _ body: @escaping (SteamUI) async throws -> Void) {
+        guard requiresLogin ? uiOnline : (uiOnline || uiReachable) else { alert = .message("Windows Steam 未运行。"); return }
         Task {
             do { try await body(ui) } catch { alert = .message("\(error)") }
             refresh()
