@@ -149,6 +149,7 @@ struct StorePageView: View {
     let appid: UInt32
     var open: (URL) -> Void = { _ in }
     var onClose: () -> Void = {}
+    var openGame: (UInt32) -> Void = { _ in }
     @EnvironmentObject var engine: EngineModel
 
     @State private var page: StorePage?
@@ -324,7 +325,7 @@ struct StorePageView: View {
                     actionButton("安装", prominent: true) { installing = true }
                         .disabled(engine.steam == nil || engine.busy)
                 }
-                Text("已在库中").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                Button("在库中查看") { openGame(appid) }.buttonStyle(.link).font(.system(size: 12.5))
             } else {
                 if let price = p.price {
                     if price.discount > 0 {

@@ -267,7 +267,7 @@ struct RootView: View {
     @ViewBuilder private func nativePage(_ page: NativePage) -> some View {
         switch page {
         case let .store(id):
-            StorePageView(appid: id, open: state.open, onClose: state.back)
+            StorePageView(appid: id, open: state.open, onClose: state.back, openGame: state.showGame)
         case let .news(id):
             NewsView(appid: id, open: state.open, onClose: state.back)
         case let .profile(id):
