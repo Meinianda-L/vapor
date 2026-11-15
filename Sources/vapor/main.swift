@@ -5,6 +5,7 @@ import VaporKit
 //   vapor libraries                 list Steam installs and installed apps
 //   vapor profile <appid>           full profile for one installed game
 //   vapor scan                      one-line profile for every installed Windows game
+//   vapor wine …                    engines, renderer packs, variants, prefix setup (WineCommand.swift)
 // Options: --prefix <wine prefix>   add a Windows Steam inside that prefix (repeatable)
 
 var args = Array(CommandLine.arguments.dropFirst())
@@ -212,6 +213,8 @@ case "engine":
     default:
         print("usage: vapor engine status|start|login|stop|library|progress <appid>|install <appid>|run …|ui …")
     }
+case "wine":
+    wineCommand(Array(args.dropFirst()))
 default:
-    print("usage: vapor libraries | profile <appid> | scan | engine …   [--prefix <wine prefix>]")
+    print("usage: vapor libraries | profile <appid> | scan | engine … | wine …   [--prefix <wine prefix>]")
 }

@@ -31,14 +31,27 @@ public final class WindowsSteam: @unchecked Sendable {
         self.logURL = logs.appendingPathComponent("windows-steam.log")
     }
 
-    /// Heroic's Steam prefix and Sikarugir engine, when present (zero-download default).
+    /// The engine and prefix chosen in Vapor's config, each falling back to Heroic's Steam prefix and
+    /// Sikarugir engine (the zero-download default) when unset or missing.
     public static func detectDefault() -> WindowsSteam? {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let prefix = home.appendingPathComponent("Games/Heroic/Prefixes/Steam")
-        let engine = home.appendingPathComponent("Library/Application Support/heroic/tools/wine/Wine-10.0-Sikarugir")
-        guard FileManager.default.fileExists(atPath: prefix.appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe").path),
-              FileManager.default.isExecutableFile(atPath: engine.appendingPathComponent("bin/wine").path) else { return nil }
+        let config = VaporConfig.load()
+        let fm = FileManager.default
+        let prefix = [config.steamPrefixURL, heroicPrefix].compactMap { $0 }.first {
+            fm.fileExists(atPath: SteamInstall.wine(prefix: $0).root.appendingPathComponent("steam.exe").path)
+        }
+        let engine = [config.engineURL, heroicEngine].compactMap { $0 }.first {
+            fm.isExecutableFile(atPath: $0.appendingPathComponent("bin/wine").path)
+        }
+        guard let prefix, let engine else { return nil }
         return WindowsSteam(prefix: prefix, engine: engine)
+    }
+
+    public static var heroicPrefix: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Games/Heroic/Prefixes/Steam")
+    }
+
+    public static var heroicEngine: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/heroic/tools/wine/Wine-10.0-Sikarugir")
     }
 
     // MARK: - Environment

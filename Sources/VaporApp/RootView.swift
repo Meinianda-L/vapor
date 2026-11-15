@@ -97,8 +97,10 @@ struct RootView: View {
                 .frame(width: 216)
             Rectangle().fill(Theme.hairline).frame(width: 1)
             detail
+                .disabled(signingIn)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.background)
+                .overlay { if signingIn { LoginView() } }
         }
         .background(Theme.background)
         .ignoresSafeArea()
@@ -145,6 +147,9 @@ struct RootView: View {
             }
         }
     }
+
+    /// Windows Steam is running with nobody signed in; its own login window stays hidden.
+    private var signingIn: Bool { engine.needsSignIn && engine.uiReachable }
 
     private var uninstallNames: [String] {
         (engine.uninstallRequest ?? []).map { engine.steamApps[$0]?.name ?? "App \($0)" }

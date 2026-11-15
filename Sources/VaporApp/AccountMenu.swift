@@ -7,6 +7,7 @@ struct AccountMenu: View {
     let openProfile: (String) -> Void
     let openAccount: () -> Void
     @State private var hovering = false
+    @State private var confirmSignOut = false
 
     /// The persona state only means something while the client is up and logged on.
     private var account: SteamUI.Account? { engine.uiOnline ? engine.account : nil }
@@ -24,6 +25,14 @@ struct AccountMenu: View {
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hovering ? Color.white.opacity(0.05) : .clear))
         .padding(.horizontal, 10)
         .onHover { hovering = $0 }
+        .onChange(of: hovering) { _, over in if over { engine.refreshLoginUsers() } }
+        .task { engine.refreshLoginUsers() }
+        .alert(engine.strings("SignOut_Title") ?? "退出登录", isPresented: $confirmSignOut) {
+            Button("退出登录", role: .destructive) { engine.signOut() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(engine.strings("SignOut_Description") ?? "退出后需要重新登录")
+        }
     }
 
     private var menu: some View {
@@ -38,6 +47,20 @@ struct AccountMenu: View {
             if let account {
                 Button(engine.strings("UserManagement_ViewProfile") ?? "查看个人资料") { openProfile(account.steamID) }
                 Button(engine.strings("UserManagement_AccountDetails") ?? "账户详情", action: openAccount)
+                Divider()
+            }
+            if account != nil {
+                Menu(engine.strings("ChangeUser_Title") ?? "切换账户") {
+                    Picker("", selection: Binding(get: { account?.accountName ?? "" },
+                                                  set: { if $0 != account?.accountName { engine.switchUser($0) } })) {
+                        ForEach(engine.loginUsers) { Text(Self.name(of: $0)).tag($0.accountName) }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                    if !engine.loginUsers.isEmpty { Divider() }
+                    Button((engine.strings("Login_AddAccount") ?? "添加账户") + "…") { engine.addAccount() }
+                }
+                Button("退出登录") { confirmSignOut = true }
                 Divider()
             }
             if engine.sessionReplaced {
@@ -66,6 +89,8 @@ struct AccountMenu: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
     }
+
+    private static func name(of user: SteamUI.LoginUser) -> String { user.persona.isEmpty ? user.accountName : user.persona }
 
     private static let states: [(value: Int, key: String, fallback: String)] = [
         (1, "Menu_Status_Online", "在线"), (3, "Menu_Status_Away", "离开"),
@@ -101,9 +126,10 @@ extension EngineModel {
     }
 }
 
-private struct AccountAvatar: View {
+struct AccountAvatar: View {
     let url: URL?
     let name: String
+    var size: CGFloat = 28
     @State private var image: NSImage?
 
     var body: some View {
@@ -112,10 +138,10 @@ private struct AccountAvatar: View {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
             } else {
                 Theme.surface
-                Image(systemName: "person.fill").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+                Image(systemName: "person.fill").font(.system(size: size * 0.43)).foregroundStyle(Theme.tertiary)
             }
         }
-        .frame(width: 28, height: 28)
+        .frame(width: size, height: size)
         .clipShape(Circle())
         .task(id: url) {
             guard let url else { image = nil; return }

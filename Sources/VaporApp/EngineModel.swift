@@ -511,16 +511,10 @@ final class EngineModel: ObservableObject {
 
     // MARK: launch
 
-    static func variantDir(for renderer: Renderer) -> URL? {
-        let name: String
-        switch renderer {
-        case .d3dMetal: name = "d3dmetal"
-        case .dxmt: name = "dxmt"
-        case .dxvkMoltenVK, .dxvkKosmicKrisp: name = "dxvk"
-        case .wined3d: name = "wined3d"
-        }
-        let dir = VaporPaths.engines.appendingPathComponent(name)
-        return FileManager.default.fileExists(atPath: dir.appendingPathComponent("bin/wine").path) ? dir : nil
+    /// The engine variant for a renderer, cut from the engine Windows Steam runs on (a variant joins
+    /// Steam's wineserver, so it must come from the same Wine build).
+    static func variantDir(for renderer: Renderer, base: URL? = WindowsSteam.detectDefault()?.engine) -> URL? {
+        EngineVariants.directory(for: renderer, base: base)
     }
 
     /// Ensures Steam is online, then runs the game with its first ladder rung.
