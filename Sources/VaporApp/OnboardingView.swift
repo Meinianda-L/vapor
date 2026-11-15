@@ -158,7 +158,7 @@ final class OnboardingModel: ObservableObject {
     // MARK: - Engine
 
     /// Vapor's own, Sikarugir's and Heroic's builds come first, then those with winemetal and wow64.
-    static func ranked(_ engines: [WineEngine]) -> [WineEngine] {
+    nonisolated static func ranked(_ engines: [WineEngine]) -> [WineEngine] {
         func key(_ e: WineEngine) -> [Int] {
             [[.vapor, .sikarugir, .heroic].contains(e.source) ? 0 : 1, e.capabilities.hasWineMetal ? 0 : 1, e.capabilities.wow64 ? 0 : 1]
         }
@@ -529,7 +529,7 @@ private struct ErrorText: View {
 }
 
 /// A bar with a label above it; indeterminate when the fraction is unknown.
-private struct ProgressLine: View {
+struct ProgressLine: View {
     let text: String
     let fraction: Double?
     var onCancel: (() -> Void)?

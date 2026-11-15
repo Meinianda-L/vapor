@@ -1,340 +1,680 @@
+import AppKit
 import SwiftUI
 import VaporKit
 
-/// One VaporBench run on one backend.
-struct BenchResult: Identifiable {
-    let variant: String
-    let test: String
-    let fps: Double
-    let p99: Double
-    var id: String { variant + test }
+private func canonical(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
 
-    static func latest(in dir: URL) -> (file: String, results: [BenchResult])? {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-            .filter({ $0.pathExtension == "jsonl" }).sorted(by: { $0.lastPathComponent > $1.lastPathComponent }) else { return nil }
-        for file in files {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            var out: [BenchResult] = []
-            for line in text.split(separator: "\n") {
-                guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                      let variant = obj["variant"] as? String, let results = obj["results"] as? [String: [String: Any]] else { continue }
-                for (test, r) in results {
-                    out.append(BenchResult(variant: variant, test: test, fps: r["fps"] as? Double ?? 0, p99: r["ms_p99"] as? Double ?? 0))
+/// The graphics components and variants of one engine, read off the main thread.
+struct RuntimesScan: Sendable {
+    var engines: [WineEngine] = []
+    var packs: [RendererPack] = []
+    /// Engines whose variants were built from each pack, by pack id.
+    var packUsers: [String: [String]] = [:]
+    var configured: URL?
+    var prefix: URL?
+    var current: WineEngine?
+    var variants: [VariantRenderer: RuntimesModel.VariantState] = [:]
+    var variantPacks: [VariantRenderer: RendererPack] = [:]
+
+    static func read(locations: VaporLocations) async -> RuntimesScan {
+        var scan = RuntimesScan()
+        let paths = EngineCatalog.SearchPaths.standard
+        let engines = OnboardingModel.ranked(await EngineCatalog.discover(in: paths))
+        let packs = RendererPacks.discover(in: paths, engines: engines)
+        let steam = WindowsSteam.detectDefault()
+        let config = VaporConfig.load(from: locations.config)
+        scan.engines = engines
+        scan.packs = packs
+        scan.configured = steam?.engine ?? config.engineURL
+        scan.prefix = steam?.prefix ?? config.steamPrefixURL
+        let builder = VariantBuilder(outputRoot: locations.variants)
+
+        for pack in packs {
+            let want = canonical(pack.root)
+            scan.packUsers[pack.id] = engines.filter { e in
+                VariantRenderer.allCases.contains { r in
+                    r.pack == pack.kind && builder.existingMarker(at: builder.directory(for: e, renderer: r))?.packRoot == want
                 }
-            }
-            if !out.isEmpty { return (file.lastPathComponent, out) }
+            }.map(\.name)
         }
-        return nil
+
+        guard let configured = scan.configured else { return scan }
+        scan.current = engines.first { canonical($0.root) == canonical(configured) }
+        guard let engine = scan.current, engine.usable else { return scan }
+        for renderer in VariantRenderer.allCases {
+            var pack: RendererPack?
+            if let kind = renderer.pack {
+                pack = RendererPacks.preferred(kind, for: engine, among: packs)
+                guard pack != nil else { scan.variants[renderer] = .noPack; continue }
+                scan.variantPacks[renderer] = pack
+            }
+            if builder.isUpToDate(renderer, engine: engine, pack: pack) {
+                scan.variants[renderer] = .current
+            } else {
+                let built = FileManager.default.isExecutableFile(atPath: builder.directory(for: engine, renderer: renderer).appendingPathComponent("bin/wine").path)
+                // Games still run on the hand-made variants this project started with until Vapor builds its own.
+                let legacy = EngineVariants.directory(for: renderer.launchRenderer, base: engine.root)?
+                    .standardizedFileURL.path.hasPrefix(EngineVariants.legacyRoot.standardizedFileURL.path) == true
+                scan.variants[renderer] = built ? .outdated : legacy ? .legacy : .missing
+            }
+        }
+        return scan
     }
+}
+
+@MainActor
+final class RuntimesModel: ObservableObject {
+    enum Job: Equatable {
+        case engine(String)
+        case importing
+        case pack(PackKind)
+        case variant(VariantRenderer)
+    }
+    enum Part: Hashable { case engines, packs, variants, remote }
+    enum VariantState: Equatable { case current, outdated, missing, noPack, legacy }
+    enum RemoteState: Equatable { case idle, loading, loaded, failed(String) }
+
+    @Published private(set) var scan = RuntimesScan()
+    @Published private(set) var loaded = false
+    @Published private(set) var sizes: [String: Int64] = [:]
+    @Published private(set) var remote: [RemoteAsset] = []
+    @Published private(set) var remoteState = RemoteState.idle
+    @Published private(set) var installedRemote: Set<String> = []
+    @Published private(set) var job: Job?
+    @Published private(set) var batch = false
+    @Published private(set) var event: DownloadEvent?
+    @Published private(set) var errors: [Part: String] = [:]
+    /// The engine this Vapor session's Windows Steam was started with.
+    @Published var inUse: URL?
+
+    let locations: VaporLocations
+    private var task: Task<Void, Never>?
+    private var sizeTask: Task<Void, Never>?
+    private var remoteTask: Task<Void, Never>?
+
+    init(locations: VaporLocations = .standard) { self.locations = locations }
+
+    var configuredRoot: URL? { scan.configured }
+    var restartPending: Bool {
+        guard let inUse, let configured = scan.configured else { return false }
+        return canonical(inUse) != canonical(configured)
+    }
+
+    // MARK: - Loading
+
+    func load() async {
+        let result = await Task.detached(priority: .userInitiated) { [locations] in await RuntimesScan.read(locations: locations) }.value
+        guard !Task.isCancelled else { return }
+        scan = result
+        loaded = true
+        measureSizes()
+    }
+
+    /// Disk use of each engine, one at a time off the main thread; rows fill in as they finish.
+    private func measureSizes() {
+        sizeTask?.cancel()
+        let engines = scan.engines.filter { sizes[$0.id] == nil }
+        sizeTask = Task { [weak self] in
+            for engine in engines {
+                let size = await Task.detached(priority: .utility) { Self.diskUse(engine.root) }.value
+                guard !Task.isCancelled, let self else { return }
+                sizes[engine.id] = size
+            }
+        }
+    }
+
+    nonisolated private static func diskUse(_ root: URL) -> Int64 {
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .isRegularFileKey]
+        guard let walker = FileManager.default.enumerator(at: root.resolvingSymlinksInPath(), includingPropertiesForKeys: keys) else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in walker {
+            if Task.isCancelled { return total }
+            guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
+            total += Int64(v.totalFileAllocatedSize ?? 0)
+        }
+        return total
+    }
+
+    func loadRemote() {
+        guard remoteState != .loading else { return }
+        remoteState = .loading
+        remoteTask?.cancel()
+        let locations = locations
+        remoteTask = Task { [weak self] in
+            do {
+                let (assets, installed) = try await Self.withTimeout(25) { () -> ([RemoteAsset], Set<String>) in
+                    let downloads = EngineDownloads(locations: locations)
+                    let assets = try await downloads.remoteOptions()
+                    return (assets, Set(assets.filter { downloads.installed($0) != nil }.map(\.id)))
+                }
+                guard !Task.isCancelled, let self else { return }
+                remote = assets
+                installedRemote = installed
+                remoteState = .loaded
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                remoteState = .failed(Self.describe(error))
+            }
+        }
+    }
+
+    private static func withTimeout<T: Sendable>(_ seconds: TimeInterval, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await body() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw WineSetupError.timeout("读取版本信息")
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw CancellationError() }
+            return first
+        }
+    }
+
+    static func describe(_ error: Error) -> String {
+        if let e = error as? WineSetupError { return e.description }
+        return error is LocalizedError ? error.localizedDescription : "操作没有完成。"
+    }
+
+    /// Stops what the page started when it goes away; a variant already being cloned finishes on its own.
+    func stop() {
+        task?.cancel()
+        sizeTask?.cancel()
+        remoteTask?.cancel()
+    }
+
+    func cancelJob() { task?.cancel() }
+
+    // MARK: - Engines
+
+    func isCurrent(_ e: WineEngine) -> Bool { scan.configured.map { canonical($0) == canonical(e.root) } ?? false }
+    func isInUse(_ e: WineEngine) -> Bool { inUse.map { canonical($0) == canonical(e.root) } ?? false }
+
+    /// The folder under Vapor's Engines that holds `e`; nil for engines Vapor did not download.
+    func ownedFolder(of e: WineEngine) -> URL? {
+        let base = canonical(locations.engines) + "/"
+        let path = canonical(e.root)
+        guard path.hasPrefix(base), let first = path.dropFirst(base.count).split(separator: "/").first else { return nil }
+        return locations.engines.appendingPathComponent(String(first), isDirectory: true)
+    }
+
+    func canDelete(_ e: WineEngine) -> Bool { ownedFolder(of: e) != nil && !isCurrent(e) && !isInUse(e) && job == nil }
+
+    func makeDefault(_ e: WineEngine) {
+        guard e.usable else { return }
+        errors[.engines] = nil
+        var config = VaporConfig.load(from: locations.config)
+        config.engineRoot = e.root.path
+        do { try config.save(to: locations.config) } catch {
+            errors[.engines] = "没能保存设置：\(error.localizedDescription)"
+            return
+        }
+        Task { await load() }
+    }
+
+    func delete(_ e: WineEngine) {
+        guard canDelete(e), let folder = ownedFolder(of: e) else { return }
+        errors[.engines] = nil
+        let variants = locations.variants.appendingPathComponent(e.id, isDirectory: true)
+        Task { [weak self] in
+            let failure = await Task.detached(priority: .userInitiated) { () -> String? in
+                do {
+                    try FileManager.default.removeItem(at: folder)
+                    if FileManager.default.fileExists(atPath: variants.path) { try FileManager.default.removeItem(at: variants) }
+                    return nil
+                } catch { return "没能删除：\(error.localizedDescription)" }
+            }.value
+            guard let self else { return }
+            errors[.engines] = failure
+            sizes[e.id] = nil
+            await load()
+        }
+    }
+
+    // MARK: - Jobs
+
+    private var sink: @Sendable (DownloadEvent) -> Void {
+        { [weak self] event in Task { @MainActor in self?.event = event } }
+    }
+
+    private func run(_ job: Job, _ part: Part, batch: Bool = false, _ body: @escaping @MainActor () async throws -> Void) {
+        guard self.job == nil else { return }
+        self.job = job
+        self.batch = batch
+        event = nil
+        errors[part] = nil
+        task = Task { [weak self] in
+            do { try await body() } catch {
+                if !Task.isCancelled { self?.errors[part] = Self.describe(error) }
+            }
+            guard let self else { return }
+            self.job = nil
+            self.batch = false
+            self.event = nil
+            await load()
+            if part == .remote || part == .packs { loadRemote() }
+        }
+    }
+
+    func download(_ asset: RemoteAsset) {
+        let part: Part = { if case .pack = asset.kind { return .packs } else { return .remote } }()
+        let job: Job = { if case let .pack(kind) = asset.kind { return .pack(kind) } else { return .engine(asset.id) } }()
+        let downloads = EngineDownloads(locations: locations)
+        run(job, part) { [self] in
+            event = .downloading(received: 0, total: asset.size)
+            let item = try await downloads.download(asset, progress: sink)
+            if case let .engine(e) = item, let reason = e.unusableReason { throw WineSetupError.engineUnusable(reason) }
+        }
+    }
+
+    func importArchive() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "选择 Wine 引擎压缩包（.tar.xz 或 .tar.gz）"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let downloads = EngineDownloads(locations: locations)
+        run(.importing, .remote) { [self] in
+            event = .extracting
+            _ = try await downloads.install(archive: url, progress: sink)
+        }
+    }
+
+    // MARK: - Variants
+
+    func rebuild(_ renderer: VariantRenderer) { rebuild([renderer], force: true, batch: false) }
+
+    func rebuildStale() {
+        rebuild(VariantRenderer.allCases.filter { [.outdated, .missing].contains(scan.variants[$0]) }, force: false, batch: true)
+    }
+
+    private func rebuild(_ renderers: [VariantRenderer], force: Bool, batch: Bool) {
+        guard let engine = scan.current, engine.usable, let first = renderers.first else { return }
+        let packs = scan.packs
+        let builder = VariantBuilder(outputRoot: locations.variants)
+        run(.variant(first), .variants, batch: batch) { [self] in
+            for renderer in renderers {
+                try Task.checkCancellation()
+                job = .variant(renderer)
+                let pack = renderer.pack.flatMap { RendererPacks.preferred($0, for: engine, among: packs) }
+                _ = try await builder.build(renderer, from: engine, pack: pack, force: force)
+            }
+        }
+    }
+
+    // MARK: - Graphics components
+
+    /// The release to offer for `kind`: the newest that is not a prerelease.
+    func latest(_ kind: PackKind) -> RemoteAsset? {
+        let all = remote.filter { $0.kind == .pack(kind) }
+        return all.first { !$0.prerelease } ?? all.first
+    }
+
+    var remoteEngines: [RemoteAsset] { remote.filter { $0.kind == .engine } }
 }
 
 struct RuntimesView: View {
-    var benchDir: URL = VaporPaths.benchResults
-    var enginesDir: URL = VaporPaths.engines
+    @EnvironmentObject var engine: EngineModel
+    @StateObject private var model: RuntimesModel
+    @State private var deleting: WineEngine?
+    @State private var showAllRemote = false
+
+    init() { _model = StateObject(wrappedValue: RuntimesModel()) }
 
     var body: some View {
-        ScrollView { RuntimesContent(benchDir: benchDir, enginesDir: enginesDir) }
-    }
-}
-
-struct RuntimesContent: View {
-    let benchDir: URL
-    let enginesDir: URL
-
-    private var engines: [(name: String, renderer: String, bridge: Bool)] {
-        let names = ((try? FileManager.default.contentsOfDirectory(atPath: enginesDir.path)) ?? []).sorted()
-        return names.map { name in
-            let d3d11 = enginesDir.appendingPathComponent("\(name)/lib/wine/x86_64-windows/d3d11.dll")
-            let bridge = FileManager.default.fileExists(atPath: enginesDir.appendingPathComponent("\(name)/lib/wine/x86_64-unix/steamclient64.so").path)
-            var renderer = "WineD3D"
-            if let data = try? Data(contentsOf: d3d11, options: .alwaysMapped) {
-                for (needle, label) in [("DXMT", "DXMT"), ("DXVK", "DXVK"), ("D3DMetal", "D3DMetal"), ("d3dshared", "D3DMetal")]
-                    where data.range(of: Data(needle.utf8)) != nil { renderer = label; break }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 34) {
+                Text("运行时").font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
+                if !model.loaded {
+                    Text("正在查找引擎…").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                } else {
+                    currentSection
+                    installedSection
+                    packsSection
+                    variantsSection
+                    remoteSection
+                }
             }
-            return (name, renderer, bridge)
+            .padding(.horizontal, 40)
+            .padding(.top, 52)
+            .padding(.bottom, 40)
+            .frame(maxWidth: 920, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task {
+            model.inUse = engine.steam?.engine
+            if !model.loaded { await model.load() }
+            if model.remoteState == .idle { model.loadRemote() }
+        }
+        .onChange(of: engine.steam?.engine) { _, new in model.inUse = new }
+        .onDisappear { model.stop() }
+        .confirmationDialog("删除 \(deleting?.name ?? "")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            presenting: deleting) { e in
+            Button("删除", role: .destructive) { model.delete(e) }
+        } message: { _ in
+            Text("会删除这个引擎的文件和它生成的渲染器变体，不能撤销。已下载的图形组件不受影响。")
         }
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 36) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("运行时").font(.system(size: 30, weight: .bold)).kerning(-0.6).foregroundStyle(Theme.text)
-                MetaLine(parts: ["Sikarugir Wine 10", "\(engines.count) 个引擎变体"])
+    // MARK: - Pieces
+
+    private func section<Content: View>(_ title: String, trailing: AnyView? = nil, error: RuntimesModel.Part? = nil,
+                                        @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                SectionLabel(text: title)
+                Spacer()
+                trailing
             }
-            BenchTable(benchDir: benchDir)
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel(text: "引擎变体")
-                VStack(spacing: 0) {
-                    ForEach(Array(engines.enumerated()), id: \.offset) { i, e in
-                        HStack {
-                            Text(e.name).font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.text)
-                            Spacer()
-                            Text(e.renderer + (e.bridge ? " · Steam 桥接" : "")).font(.system(size: 12)).foregroundStyle(Theme.secondary)
-                        }
-                        .padding(.vertical, 10)
-                        if i < engines.count - 1 { Divider().overlay(Theme.hairline) }
+            .padding(.bottom, 8)
+            content()
+            if let error, let message = model.errors[error] {
+                Text(message).font(.system(size: 12)).foregroundStyle(Theme.bad).fixedSize(horizontal: false, vertical: true).padding(.top, 10)
+            }
+        }
+    }
+
+    private func link(_ title: String, destructive: Bool = false, enabled: Bool = true, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(!enabled ? Theme.tertiary : destructive ? Theme.bad : Theme.accent)
+            .disabled(!enabled)
+    }
+
+    private func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+
+    private func tidy(_ url: URL) -> String { url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
+
+    private func wineVersion(_ v: String?) -> String? {
+        guard let v else { return nil }
+        return v.hasPrefix("wine-") ? "Wine \(v.dropFirst(5))" : v.lowercased().hasPrefix("wine") ? v : "Wine \(v)"
+    }
+
+    private func capabilities(_ e: WineEngine) -> [String] {
+        var out: [String] = []
+        if e.capabilities.hasWineMetal { out.append("支持 DXMT") }
+        if e.capabilities.hasD3DMetal { out.append("含 D3DMetal") }
+        if e.capabilities.wow64 { out.append("WoW64") } else if e.capabilities.supports32Bit { out.append("32 位") }
+        out += e.capabilities.bundledPacks.map { "自带 \($0.displayName)" }
+        return out
+    }
+
+    private func progress(for job: RuntimesModel.Job, label: String? = nil, cancel: Bool = true) -> some View {
+        var text = label ?? "正在准备"
+        var fraction: Double?
+        if let event = model.event { (text, fraction) = OnboardingModel.describe(event) }
+        let onCancel: (() -> Void)? = cancel ? { model.cancelJob() } : nil
+        return ProgressLine(text: text, fraction: fraction, onCancel: onCancel).padding(.vertical, 8)
+    }
+
+    private func row<Lead: View, Trail: View>(@ViewBuilder lead: () -> Lead, @ViewBuilder trailing: () -> Trail) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            lead()
+            Spacer(minLength: 12)
+            trailing()
+        }
+        .padding(.vertical, 11)
+    }
+
+    // MARK: - 当前引擎
+
+    @ViewBuilder private var currentSection: some View {
+        section("当前引擎") {
+            if let e = model.scan.current {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(e.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                    MetaLine(parts: [e.source.displayName, wineVersion(e.version) ?? ""] + capabilities(e))
+                    VStack(alignment: .leading, spacing: 6) {
+                        place("引擎位置", e.root)
+                        if let prefix = model.scan.prefix { place("Steam 环境", prefix) }
+                    }
+                    .padding(.top, 4)
+                    if let reason = e.unusableReason {
+                        Text(reason).font(.system(size: 12)).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if model.restartPending {
+                        Text("Windows Steam 目前还在用上一个引擎，重新启动 Vapor 后才会换到这个引擎。")
+                            .font(.system(size: 12)).foregroundStyle(Theme.secondary)
                     }
                 }
-                Text("每个变体都是同一引擎的 APFS 克隆，只多出各自的图形库，几乎不占磁盘。")
-                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+            } else if let root = model.configuredRoot {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("设置的引擎不在已发现的列表里。").font(.system(size: 13)).foregroundStyle(Theme.text)
+                    place("引擎位置", root)
+                }
+            } else {
+                Text("还没有选定引擎。在下面设为默认，或下载一个新的。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
             }
         }
-        .padding(.horizontal, 36)
-        .padding(.top, 44)
-        .padding(.bottom, 40)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
-}
 
-/// Tests as rows, backends as columns; the best value per row is the only accent.
-struct BenchTable: View {
-    let benchDir: URL
-    private let tests = [("fill", "像素填充", "GPU"), ("draws", "绘制调用", "CPU 转译"), ("instanced", "实例化几何", "几何")]
-    private let order = ["d3dmetal", "dxmt", "dxvk"]
-    private let names = ["d3dmetal": "D3DMetal", "dxmt": "DXMT", "dxvk": "DXVK"]
+    private func place(_ label: String, _ url: URL) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label).font(.system(size: 12)).foregroundStyle(Theme.secondary).frame(width: 64, alignment: .leading)
+            Text(tidy(url)).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text)
+                .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+            link("在访达中显示") { reveal(url) }
+        }
+    }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "VAPORBENCH · 帧率，越高越好")
-            if let (file, results) = BenchResult.latest(in: benchDir) {
-                let variants = order.filter { v in results.contains { $0.variant == v } }
-                Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 0) {
-                    GridRow {
-                        Text("")
-                        ForEach(variants, id: \.self) { v in
-                            Text(names[v] ?? v).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
+    // MARK: - 已安装的引擎
+
+    @ViewBuilder private var installedSection: some View {
+        section("已安装的引擎", error: .engines) {
+            if model.scan.engines.isEmpty {
+                Text("没有找到 Wine 引擎。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+            }
+            ForEach(model.scan.engines) { e in
+                row {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(e.name).font(.system(size: 13.5, weight: .medium)).foregroundStyle(e.usable ? Theme.text : Theme.secondary)
+                        MetaLine(parts: [e.source.displayName, wineVersion(e.version) ?? "",
+                                         model.sizes[e.id].map { bytes($0) } ?? "", status(e)], size: 11.5)
+                        if let reason = e.unusableReason {
+                            Text(reason).font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    .padding(.bottom, 8)
-                    ForEach(tests, id: \.0) { key, title, sub in
-                        let rows = results.filter { $0.test == key }
-                        let best = rows.map(\.fps).max() ?? 1
-                        Divider().overlay(Theme.hairline).gridCellUnsizedAxes(.horizontal)
-                        GridRow(alignment: .center) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(title).font(.system(size: 13)).foregroundStyle(Theme.text)
-                                Text(sub).font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                } trailing: {
+                    HStack(spacing: 14) {
+                        if e.usable && !model.isCurrent(e) { link("设为默认") { model.makeDefault(e) } }
+                        link("在访达中显示") { reveal(e.root) }
+                        if model.ownedFolder(of: e) != nil { link("删除", destructive: true, enabled: model.canDelete(e)) { deleting = e } }
+                    }
+                }
+                Divider().overlay(Theme.hairline)
+            }
+            if model.scan.engines.contains(where: { model.ownedFolder(of: $0) != nil }) {
+                Text("只有 Vapor 自己下载的引擎可以在这里删除。").font(.system(size: 11)).foregroundStyle(Theme.tertiary).padding(.top, 8)
+            }
+        }
+    }
+
+    private func status(_ e: WineEngine) -> String {
+        if model.isCurrent(e) { return model.isInUse(e) || model.inUse == nil ? "默认" : "默认，重启后生效" }
+        return e.usable ? "" : "不可用"
+    }
+
+    // MARK: - 图形组件
+
+    @ViewBuilder private var packsSection: some View {
+        let checking = model.remoteState == .loading
+        section("图形组件", trailing: AnyView(HStack(spacing: 10) {
+            if checking { ProgressView().controlSize(.small) }
+            link(checking ? "正在检查…" : "检查更新", enabled: !checking && model.job == nil) { model.loadRemote() }
+        }), error: .packs) {
+            ForEach(PackKind.allCases, id: \.self) { kind in
+                packBlock(kind)
+                Divider().overlay(Theme.hairline)
+            }
+            if case let .failed(message) = model.remoteState {
+                Text(message).font(.system(size: 12)).foregroundStyle(Theme.bad).padding(.top, 10)
+            }
+        }
+    }
+
+    @ViewBuilder private func packBlock(_ kind: PackKind) -> some View {
+        let packs = model.scan.packs.filter { $0.kind == kind }
+            .sorted { $0.version.compare($1.version, options: .numeric) == .orderedDescending }
+        let latest = model.latest(kind)
+        let haveLatest = latest.map { l in packs.contains { $0.origin == .vapor && $0.version == l.installName } } ?? false
+        VStack(alignment: .leading, spacing: 0) {
+            row {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(kind.displayName).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.text)
+                    if packs.isEmpty {
+                        Text(kind == .d3dmetal ? "没有找到。需要 Game Porting Toolkit，或自带 D3DMetal 的引擎，Vapor 不提供下载。" : "还没有安装。")
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } trailing: {
+                if model.job == .pack(kind) {
+                    EmptyView()
+                } else if let latest {
+                    HStack(spacing: 12) {
+                        Text(haveLatest ? "已是最新 \(latest.release)" : "最新 \(latest.release)")
+                            .font(.system(size: 11.5)).foregroundStyle(haveLatest ? Theme.secondary : Theme.text)
+                        if !haveLatest { link(packs.contains { $0.origin == .vapor } ? "更新" : "下载", enabled: model.job == nil) { model.download(latest) } }
+                    }
+                }
+            }
+            if model.job == .pack(kind) { progress(for: .pack(kind)) }
+            ForEach(packs) { pack in
+                let users = model.scan.packUsers[pack.id] ?? []
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(pack.version).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.text)
+                    Text([pack.origin.displayName, users.isEmpty ? "未被引擎变体使用" : "用于 " + users.joined(separator: "、")]
+                        .joined(separator: "  ·  "))
+                        .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.bottom, 7)
+            }
+        }
+    }
+
+    // MARK: - 渲染器变体
+
+    private static let rendererNames: [(VariantRenderer, String, String)] = [
+        (.dxmt, "DXMT", "DirectX 11 直接转 Metal"), (.dxvk, "DXVK", "经 Vulkan 的 DirectX 转译"),
+        (.d3dmetal, "D3DMetal", "Apple 的 DirectX 11/12 转译"), (.wined3d, "WineD3D", "Wine 自带，不需要额外组件"),
+    ]
+
+    @ViewBuilder private var variantsSection: some View {
+        let stale = VariantRenderer.allCases.contains { [.outdated, .missing].contains(model.scan.variants[$0]) }
+        section("渲染器变体", trailing: stale && model.job == nil ? AnyView(link("全部生成") { model.rebuildStale() }) : nil, error: .variants) {
+            if let e = model.scan.current, e.usable {
+                ForEach(Self.rendererNames, id: \.0) { renderer, name, detail in
+                    let state = model.scan.variants[renderer]
+                    VStack(alignment: .leading, spacing: 0) {
+                        row {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(name).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.text)
+                                MetaLine(parts: [detail, model.scan.variantPacks[renderer].map { "组件 \($0.version)" } ?? ""], size: 11.5)
                             }
-                            .frame(width: 110, alignment: .leading)
-                            ForEach(variants, id: \.self) { v in
-                                let fps = rows.first { $0.variant == v }?.fps ?? 0
-                                let isBest = fps >= best * 0.99            // within 1% counts as a tie
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("\(Int(fps.rounded()))")
-                                        .font(.system(size: 15, weight: isBest ? .semibold : .regular).monospacedDigit())
-                                        .foregroundStyle(isBest ? Theme.text : Theme.secondary)
-                                    GeometryReader { g in
-                                        ZStack(alignment: .leading) {
-                                            Capsule().fill(Theme.surface)
-                                            Capsule().fill(isBest ? Theme.accent : Color(white: 0.4))
-                                                .frame(width: g.size.width * CGFloat(fps / best))
-                                        }
-                                    }
-                                    .frame(width: 150, height: 3)
+                        } trailing: {
+                            if model.job != .variant(renderer) {
+                                HStack(spacing: 14) {
+                                    Text(label(state)).font(.system(size: 12)).foregroundStyle(color(state))
+                                    if state != .noPack { link("重新生成", enabled: model.job == nil) { model.rebuild(renderer) } }
                                 }
                             }
                         }
-                        .padding(.vertical, 12)
+                        if model.job == .variant(renderer) {
+                            progress(for: .variant(renderer), label: "正在生成", cancel: model.batch)
+                        }
                     }
+                    Divider().overlay(Theme.hairline)
                 }
-                Text("没有哪个后端在所有负载上都最快，所以 Vapor 按游戏实测后再决定。数据来自 \(file)。")
-                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                Text("变体是 \(e.name) 的 APFS 克隆，只多出各自的图形库，几乎不占磁盘。游戏按渲染器选用对应的变体。")
+                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary).padding(.top, 8)
             } else {
-                Text("还没有结果。运行 bench/run.sh 生成。").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                Text("先选定一个可用的引擎。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+            }
+        }
+    }
+
+    private func label(_ s: RuntimesModel.VariantState?) -> String {
+        switch s {
+        case .current: return "最新"
+        case .outdated: return "已过期"
+        case .missing: return "尚未生成"
+        case .noPack: return "缺少组件"
+        case .legacy: return "使用早期手工变体"
+        case nil: return "—"
+        }
+    }
+
+    private func color(_ s: RuntimesModel.VariantState?) -> Color {
+        switch s {
+        case .current: return Theme.ok
+        case .outdated: return Theme.warn
+        default: return Theme.secondary
+        }
+    }
+
+    // MARK: - 下载新引擎
+
+    @ViewBuilder private var remoteSection: some View {
+        let all = model.remoteEngines
+        let shown = showAllRemote ? all : Array(all.prefix(6))
+        section("下载新引擎", trailing: AnyView(HStack(spacing: 14) {
+            link("从文件导入…", enabled: model.job == nil) { model.importArchive() }
+        }), error: .remote) {
+            if model.job == .importing { progress(for: .importing) }
+            switch model.remoteState {
+            case .idle, .loading where all.isEmpty:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在读取可下载的版本…").font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
+                }
+            case let .failed(message) where all.isEmpty:
+                HStack(spacing: 14) {
+                    Text(message).font(.system(size: 12.5)).foregroundStyle(Theme.bad)
+                    link("重试") { model.loadRemote() }
+                }
+            default:
+                ForEach(shown) { asset in
+                    VStack(alignment: .leading, spacing: 0) {
+                        row {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(asset.installName).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.text)
+                                MetaLine(parts: [asset.release + (asset.prerelease ? "（预览版）" : ""),
+                                                 "\(OnboardingModel.megabytes(asset.size)) MB",
+                                                 asset.sha256 == nil ? "没有校验值" : "SHA-256 校验"], size: 11.5)
+                            }
+                        } trailing: {
+                            if model.job == .engine(asset.id) {
+                                EmptyView()
+                            } else if model.installedRemote.contains(asset.id) {
+                                Text("已安装").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                            } else {
+                                link("下载", enabled: model.job == nil) { model.download(asset) }
+                            }
+                        }
+                        if model.job == .engine(asset.id) { progress(for: .engine(asset.id)) }
+                    }
+                    Divider().overlay(Theme.hairline)
+                }
+                if all.count > shown.count {
+                    link("显示全部 \(all.count) 个") { showAllRemote = true }.padding(.top, 10)
+                }
+                if all.isEmpty {
+                    Text("没有可下载的引擎。").font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
+                }
             }
         }
     }
 }
 
-struct SettingsView: View {
-    @AppStorage("boostMode") private var boost = "off"
-    @AppStorage("defaultMsync") private var msync = true
-    @EnvironmentObject var engine: EngineModel
-    @State private var steam: SteamUI.Settings?
-    @State private var throttle = ""
-    @FocusState private var throttleFocused: Bool
-    @State private var confirmClearCache = false
-    /// Values being written, by setting name, shown until settingsStore reports them back.
-    @State private var pending: [String: AnyHashable] = [:]
-
-    var body: some View {
-        Form {
-            if let a = engine.account {
-                Section("账户") {
-                    LabeledContent("昵称", value: a.persona)
-                    LabeledContent("账户名称", value: a.accountName)
-                    LabeledContent("Steam ID", value: a.steamID)
-                    if !a.wallet.isEmpty { LabeledContent("钱包余额", value: a.wallet) }
-                }
-            }
-            if let st = steam {
-                downloads(st)
-                storage(st)
-                Section("Steam 云") {
-                    Toggle("为支持的应用程序启用 Steam 云同步", isOn: set("cloud_enabled", st, \.cloudEnabled))
-                }
-                Section {
-                    Toggle(engine.strings("Settings_InGame_EnableOverlay") ?? "在游戏中启用 Steam 界面", isOn: set("enable_overlay", st, \.overlayEnabled))
-                } header: { Text("游戏中") } footer: {
-                    Text("Shift+Tab 打开的好友、浏览器和市场。在 Wine 下它偶尔会让 Steam 的界面进程崩溃（Steam 会自行恢复）；遇到问题可以关掉。")
-                }
-            } else {
-                Section("Steam") {
-                    Text(engine.uiOnline ? "正在读取 Steam 设置…" : "Windows Steam 在线后可在这里修改它的设置。").foregroundStyle(.secondary)
-                }
-            }
-            Section {
-                Picker("超分与插帧", selection: $boost) {
-                    Text("关闭").tag("off")
-                    Text("MetalFX 超分").tag("upscale")
-                    Text("超分 + 插帧").tag("upscale,framegen")
-                }
-            } header: { Text("VaporBoost") } footer: {
-                Text("在 Metal 呈现层完成，D3DMetal、DXMT、MoltenVK 都适用。插帧会多出约一帧延迟。")
-            }
-            Section("Wine") {
-                Toggle("默认启用 MSync", isOn: $msync)
-                LabeledContent("引擎目录", value: VaporPaths.engines.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                LabeledContent("Wine 环境", value: VaporPaths.prefixes.map { $0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }.joined(separator: "\n"))
-            }
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Text("设置")
-                .font(.system(size: 30, weight: .bold))
-                .kerning(-0.6)
-                .foregroundStyle(Theme.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 36)
-                .padding(.top, 44)
-                .padding(.bottom, 4)
-        }
-        .task(id: engine.uiOnline) { await reload() }
-        .confirmationDialog("清除下载缓存？", isPresented: $confirmClearCache) {
-            Button("清除", role: .destructive) { engine.uiAction { try await $0.clearDownloadCache() } }
-        } message: { Text("可以解决下载卡住或无法开始的问题。Steam 会重新读取下载配置。") }
-    }
-
-    private func reload() async {
-        guard engine.uiOnline, let st = try? await engine.ui.settings() else { return }
-        show(st)
-    }
-
-    private func show(_ st: SteamUI.Settings) {
-        steam = st
-        // Never replace what the user is typing, or a rejected value they have not corrected yet.
-        guard !throttleFocused, throttleKbps(throttle, inBits: st.rateInBits) != nil else { return }
-        // While a throttle or unit write is in flight, Steam still reports the old value: refill only once
-        // it reports the one being written, so the field does not flip back (or lose the entry if it fails).
-        if let want = pending["download_throttle_rate"]?.base as? Int, st.throttleKbps != want { return }
-        if let want = pending["download_rate_bits_per_s"]?.base as? Bool, st.rateInBits != want { return }
-        // Stored in kbit/s; Steam shows KB/s unless "rate in bits" is on (its own ×8 conversion).
-        let shown = st.rateInBits ? st.throttleKbps : st.throttleKbps / 8
-        throttle = shown > 0 ? "\(shown)" : ""
-    }
-
-    /// The throttle field as kbit/s: empty is unlimited (0); anything but a whole number is rejected.
-    private func throttleKbps(_ text: String, inBits: Bool) -> Int? {
-        let s = text.trimmingCharacters(in: .whitespaces)
-        if s.isEmpty { return 0 }
-        guard s.allSatisfy(\.isASCII), s.allSatisfy(\.isNumber), let n = Int(s) else { return nil }
-        let (kbps, overflow) = n.multipliedReportingOverflow(by: inBits ? 1 : 8)
-        return overflow || kbps > Int(Int32.max) ? nil : kbps
-    }
-
-    /// Converts with the unit the field was filled in (the settings last read), not a pending toggle.
-    private func commitThrottle() {
-        guard let st = steam, let kbps = throttleKbps(throttle, inBits: st.rateInBits) else { return }
-        set("download_throttle_rate", st, \.throttleKbps).wrappedValue = kbps
-    }
-
-    /// A binding to one Steam client setting. It reads the latest settings plus the value being written,
-    /// never the copy the row was built with, so a second click before Steam answers acts on what is shown.
-    private func set<T: Hashable>(_ name: String, _ st: SteamUI.Settings, _ key: KeyPath<SteamUI.Settings, T>) -> Binding<T> {
-        Binding(get: { (pending[name]?.base as? T) ?? (steam ?? st)[keyPath: key] }, set: { v in
-            let shown = (pending[name]?.base as? T) ?? (steam ?? st)[keyPath: key]
-            guard engine.uiOnline, v != shown else { return }
-            pending[name] = AnyHashable(v)
-            engine.uiAction { ui in
-                defer { Task { @MainActor in if pending[name]?.base as? T == v { pending[name] = nil } } }
-                try await ui.setSetting(name, v)
-                // settingsStore applies a write a moment later: re-read until it reports the new value.
-                for _ in 0..<10 {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                    guard let st = try? await ui.settings() else { continue }
-                    await MainActor.run { show(st) }
-                    if st[keyPath: key] == v { break }
-                }
-            }
-        })
-    }
-
-    @ViewBuilder private func downloads(_ st: SteamUI.Settings) -> some View {
-        let regionName = st.regions.first { $0.id == st.downloadRegion }?.name ?? "\(st.downloadRegion)"
-        Section {
-            Picker(engine.strings("DownloadSettings_SelectRegion") ?? "下载地区", selection: set("download_region", st, \.downloadRegion)) {
-                ForEach(st.regions.sorted { ($0.name.hasPrefix("China") ? 0 : 1, $0.name) < ($1.name.hasPrefix("China") ? 0 : 1, $1.name) }, id: \.id) {
-                    Text($0.name).tag($0.id)
-                }
-            }
-            HStack {
-                Text("限制下载速度")
-                Spacer()
-                TextField("不限制", text: $throttle)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 100)
-                    .foregroundStyle(throttleKbps(throttle, inBits: st.rateInBits) == nil ? Theme.bad : .primary)
-                    .focused($throttleFocused)
-                    .onSubmit(commitThrottle)
-                    .onChange(of: throttleFocused) { _, focused in if !focused { commitThrottle() } }
-                Text(st.rateInBits ? "Kbps" : "KB/s").foregroundStyle(.secondary)
-            }
-            Toggle("游戏运行时允许下载", isOn: set("download_while_app_running", st, \.downloadWhilePlaying))
-            Toggle("串流时限制下载速度", isOn: set("download_throttle_while_streaming", st, \.throttleWhileStreaming))
-            Toggle("以比特/秒显示下载速率", isOn: set("download_rate_bits_per_s", st, \.rateInBits))
-            Toggle("启用着色器预缓存", isOn: set("enable_shader_precache", st, \.shaderPrecache))
-            Toggle("仅在指定时段自动更新游戏", isOn: set("restrict_auto_updates", st, \.restrictAutoUpdates))
-            if st.restrictAutoUpdates {
-                Picker("开始", selection: set("restrict_auto_updates_start", st, \.restrictStart)) {
-                    ForEach(0..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) }
-                }
-                Picker("结束", selection: set("restrict_auto_updates_end", st, \.restrictEnd)) {
-                    ForEach(0..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) }
-                }
-            }
-            HStack {
-                Text("下载缓存")
-                Spacer()
-                Button("清除下载缓存…") { confirmClearCache = true }
-            }
-        } header: { Text("下载") } footer: {
-            if !regionName.hasPrefix("China") {
-                Text("当前下载地区是 \(regionName)。在国内网络下，选离你近的 China 节点通常快得多。")
-            }
-        }
-    }
-
-    @ViewBuilder private func storage(_ st: SteamUI.Settings) -> some View {
-        Section("存储空间") {
-            ForEach(st.folders, id: \.index) { f in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(f.path).font(.system(size: 12).monospaced())
-                        if f.isDefault { Text("默认").font(.system(size: 10, weight: .semibold)).padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Capsule().fill(Theme.accent.opacity(0.2))).foregroundStyle(Theme.accent) }
-                        Spacer()
-                        Button("在访达中显示") { engine.reveal(windowsPath: f.path) }
-                        if !f.isDefault { Button("设为默认") { engine.uiAction { try await $0.setDefaultLibraryFolder(f.index) } } }
-                        Button("修复") { engine.uiAction { try await $0.repairLibraryFolder(f.index) } }
-                    }
-                    ProgressBar(fraction: f.capacity > 0 ? Double(f.capacity - f.free) / Double(f.capacity) : 0)
-                    Text("已用 \(bytes(f.capacity - f.free)) · 可用 \(bytes(f.free)) · 共 \(bytes(f.capacity))")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            }
+private extension VariantRenderer {
+    /// The launch renderer this variant serves.
+    var launchRenderer: Renderer {
+        switch self {
+        case .dxmt: return .dxmt
+        case .dxvk: return .dxvkMoltenVK
+        case .d3dmetal: return .d3dMetal
+        case .wined3d: return .wined3d
         }
     }
 }
