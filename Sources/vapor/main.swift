@@ -48,6 +48,9 @@ func printProfile(_ p: GameProfile, install: SteamInstall) {
     }
     print("  graphics    \(apis.isEmpty ? "none detected" : apis.joined(separator: "; "))")
     print("  steamworks  \(a.usesSteamworks ? "yes" : "no")")
+    if let plan = p.launch {
+        print("  launch      \(plan.executable)\(plan.arguments.isEmpty ? "" : " " + plan.arguments.joined(separator: " "))\(plan.workingDirectory.map { "  (cwd \($0))" } ?? "")\(plan.bypassesAntiCheat ? "  [anti-cheat skipped, offline only]" : "")")
+    }
     if !a.antiCheats.isEmpty { print("  anti-cheat  \(a.antiCheats.map { "\($0.name) (\($0.evidence))" }.joined(separator: ", "))") }
     if let ac = p.antiCheatStatus { print("  AWACY       \(ac.status) — \(ac.antiCheats.joined(separator: ","))") }
     if !a.thirdPartyLaunchers.isEmpty { print("  launchers   \(a.thirdPartyLaunchers.joined(separator: ", "))") }

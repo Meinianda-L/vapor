@@ -520,7 +520,7 @@ final class EngineModel: ObservableObject {
     /// Ensures Steam is online, then runs the game with its first ladder rung.
     func play(_ game: GameItem) {
         guard let steam, !stopping, !running.contains(game.appid), let profile = game.profile, let dir = game.installDir else { return }
-        let rung = profile.ladder.first
+        let rung = chosenRung(game.appid, in: profile)
         guard let plan = profile.plan(for: rung) else { alert = .message("找不到游戏程序。"); return }
         let exe = plan.executable
         let workingDirectory = plan.workingDirectoryURL(in: dir)
@@ -556,8 +556,14 @@ final class EngineModel: ObservableObject {
                                      workingDirectory: workingDirectory, engineVariant: variant, extraEnv: env)
                 }.value
                 // wine runs the exe in this process: it ends with the game (or early, when a launcher hands off).
-                process.terminationHandler = { [weak self] _ in
-                    Task { @MainActor in self?.running.remove(appid); self?.gameProcesses[appid] = nil }
+                let started = Date(), renderer = rung.map { Theme.rendererLabel($0.renderer) } ?? "当前后端", name = game.name
+                process.terminationHandler = { [weak self] p in
+                    let quick = Date().timeIntervalSince(started) < 15 && p.terminationStatus != 0
+                    Task { @MainActor in
+                        self?.running.remove(appid); self?.gameProcesses[appid] = nil
+                        // A start-up crash is almost always the renderer; say which one and where to change it.
+                        if quick { self?.alert = .message("\(name) 在 \(renderer) 下启动后很快退出了。可以在游戏详情页的“候选后端”里换一个再试。") }
+                    }
                 }
                 if process.isRunning { gameProcesses[appid] = process } else { running.remove(appid) }
             } catch {
@@ -566,6 +572,24 @@ final class EngineModel: ObservableObject {
             }
             refresh()
         }
+    }
+
+    // MARK: renderer choice
+
+    /// The renderer the user picked for a game (by renderer and executable, so it survives ladder reordering).
+    @Published private(set) var rendererChoices: [UInt32: String] = UserDefaults.standard.dictionary(forKey: "rendererChoices")?
+        .reduce(into: [:]) { out, kv in if let id = UInt32(kv.key), let v = kv.value as? String { out[id] = v } } ?? [:]
+
+    private static func key(_ rung: LadderRung) -> String { rung.renderer.rawValue + "|" + (rung.executable ?? "") + "|" + rung.arguments.joined(separator: " ") }
+
+    func chosenRung(_ appid: UInt32, in profile: GameProfile) -> LadderRung? {
+        guard let k = rendererChoices[appid], let rung = profile.ladder.first(where: { Self.key($0) == k }) else { return profile.ladder.first }
+        return rung
+    }
+
+    func choose(_ rung: LadderRung, for appid: UInt32) {
+        rendererChoices[appid] = Self.key(rung)
+        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: rendererChoices.map { (String($0.key), $0.value) }), forKey: "rendererChoices")
     }
 
     /// Steam's 停止: ends the game's wine process (the Windows process lives in it).

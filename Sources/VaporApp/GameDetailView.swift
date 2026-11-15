@@ -213,6 +213,7 @@ struct StopButton: View {
 /// Two columns: how Vapor will run it (left), the facts (right).
 struct DetailBody: View {
     let game: GameItem
+    @EnvironmentObject var engine: EngineModel
 
     var body: some View {
         if let p = game.profile {
@@ -223,11 +224,13 @@ struct DetailBody: View {
                         SectionLabel(text: "候选后端")
                         VStack(spacing: 0) {
                             ForEach(Array(p.ladder.enumerated()), id: \.offset) { i, rung in
-                                LadderRow(index: i, rung: rung)
+                                LadderRow(index: i, rung: rung, selected: engine.chosenRung(game.appid, in: p) == rung) {
+                                    engine.choose(rung, for: game.appid)
+                                }
                                 if i < p.ladder.count - 1 { Divider().overlay(Theme.hairline) }
                             }
                         }
-                        Text("Vapor 从第一项开始，按实测帧时间重新排序；崩溃时自动换下一项。")
+                        Text("点一项，作为这个游戏启动时使用的图形后端。默认用第一项。")
                             .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
                     }
                 }
@@ -273,7 +276,7 @@ struct DetailBody: View {
             ("图形", a.likelyAPIs.map(Theme.apiLabel).joined(separator: "、").ifEmpty("未检测到")),
             ("架构", Theme.machineLabel(a.mainMachine)),
             ("引擎", Theme.engineLabel(a.engine)),
-            ("Steamworks", a.usesSteamworks ? "原生 Steam 桥接" : "不使用"),
+            ("Steamworks", a.usesSteamworks ? "后台 Windows Steam" : "不使用"),
             ("反作弊", a.antiCheats.map(\.name).joined(separator: "、").ifEmpty("没有")),
             ("Valve 配置", p.valveFlags.joined(separator: ", ").ifEmpty("无")),
             ("程序", a.mainExecutable?.lastPathComponent ?? "未知"),
@@ -308,25 +311,38 @@ struct FactsTable: View {
 struct LadderRow: View {
     let index: Int
     let rung: LadderRung
+    var selected = false
+    var choose: () -> Void = {}
+    @State private var hovering = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 14) {
-            Text("\(index + 1)")
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
-                .foregroundStyle(index == 0 ? Theme.accent : Theme.tertiary)
-                .frame(width: 14, alignment: .trailing)
-            Text(Theme.rendererLabel(rung.renderer))
-                .font(.system(size: 13, weight: index == 0 ? .semibold : .regular))
-                .foregroundStyle(Theme.text)
-                .frame(width: 150, alignment: .leading)
-            Text(Theme.reasonLabel(rung.reason) + (rung.arguments.isEmpty ? "" : "，参数 \(rung.arguments.joined(separator: " "))")
-                 + (rung.experimental ? "（实验性）" : ""))
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.secondary)
-                .lineLimit(1)
-            Spacer(minLength: 0)
+        Button(action: choose) {
+            HStack(alignment: .firstTextBaseline, spacing: 14) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .opacity(selected ? 1 : 0)
+                    .frame(width: 14, alignment: .trailing)
+                Text(Theme.rendererLabel(rung.renderer))
+                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 150, alignment: .leading)
+                Text(Theme.reasonLabel(rung.reason) + (rung.arguments.isEmpty ? "" : "，参数 \(rung.arguments.joined(separator: " "))")
+                     + (rung.experimental ? "（实验性）" : ""))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text("\(index + 1)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.tertiary)
+            }
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .background(hovering ? Color.white.opacity(0.03) : .clear)
         }
-        .padding(.vertical, 10)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
