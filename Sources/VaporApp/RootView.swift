@@ -69,8 +69,9 @@ enum Destination: Hashable {
 final class AppState: ObservableObject {
     @Published var store = LibraryStore()
     let engine = EngineModel()
-    /// Created at launch so the store is already loaded (and signed in) when it is opened.
-    let storeModel = StoreModel()
+    /// Keeps the shared web data store signed in as the Windows Steam account, for checkout and
+    /// the community pages that need the session.
+    let webSession = SteamWebSession()
     @Published var destination: Destination? = .all
     /// The game whose page is open; looked up in the library on every render so it stays current.
     @Published var selectedID: UInt32?
@@ -92,16 +93,18 @@ final class AppState: ObservableObject {
     /// other Steam pages, the default browser for anything else. A URL for the page already on screen
     /// (its "open in Steam" link) goes to the web panel.
     func open(_ url: URL) {
+        if let page = NativePage(url), page != pages.last {
+            web.close()
+            pages.append(page)
+            return
+        }
         switch SteamLink(url) {
         case let .play(id), let .install(id): showGame(id); return
         case let .page(page): return open(page)
         case let .external(external): NSWorkspace.shared.open(external); return
         case .ignore: if !SteamLink.isWeb(url) { return }
         }
-        if let page = NativePage(url), page != pages.last {
-            web.close()
-            pages.append(page)
-        } else if SteamLink.isSteamWeb(url) {
+        if SteamLink.isSteamWeb(url) {
             web.open(url)
         } else {
             NSWorkspace.shared.open(url)
@@ -148,12 +151,22 @@ enum NativePage: Hashable {
     case store(UInt32)
     case news(UInt32)
     case profile(String)
+    case community(CommunityPage)
+    case wishlist, cart, account
 
-    /// store.steampowered.com/app/<id>, …/news/app/<id>, steamcommunity.com/profiles/<steamid64>.
+    /// store.steampowered.com/app/<id>, …/news/app/<id>, …/wishlist, …/cart, …/account,
+    /// steamcommunity.com/profiles/<steamid64>, and every community page CommunityPage knows.
     init?(_ url: URL) {
+        if let c = CommunityPage.page(for: url) { self = .community(c); return }
         guard SteamLink.isSteamWeb(url), let host = url.host?.lowercased() else { return nil }
         let parts = url.pathComponents.filter { $0 != "/" }
         if host == "store.steampowered.com" {
+            switch parts.first {
+            case "wishlist": self = .wishlist; return
+            case "cart": self = .cart; return
+            case "account": if parts.count == 1 { self = .account; return }
+            default: break
+            }
             if parts.count >= 2, parts[0] == "app", let id = UInt32(parts[1]) { self = .store(id); return }
             if parts.count >= 3, parts[0] == "news", parts[1] == "app", let id = UInt32(parts[2]) { self = .news(id); return }
         } else if host == "steamcommunity.com", parts.count == 2, parts[0] == "profiles",
@@ -233,7 +246,7 @@ struct RootView: View {
             UninstallSheet(appid: engine.uninstallRequest?.count == 1 ? engine.uninstallRequest?.first : nil,
                            names: uninstallNames, confirm: { engine.answerUninstall(true) }, dismiss: { engine.answerUninstall(false) })
         }
-        .task(id: engine.uiOnline) { if engine.uiOnline { await state.storeModel.link(to: engine.ui) } }
+        .task(id: engine.uiOnline) { if engine.uiOnline { await state.webSession.link(to: engine.ui) } }
         .onChange(of: engine.steamApps, initial: true) { _, apps in store.merge(steamApps: Array(apps.values)) }
         .onChange(of: engine.progress) { old, new in
             // Downloads starting, finishing or going away change what is installed. A manifest caught
@@ -275,16 +288,21 @@ struct RootView: View {
         case let .profile(id):
             ProfileView(steamID: id, open: state.open, openGame: state.showGame, onClose: state.back,
                         openChat: { state.chat(with: $0) })
+        case let .community(c):
+            CommunityPageView(page: c, open: state.open, onClose: state.back)
+        case .wishlist:
+            WishlistView(open: state.open, openApp: { state.show(.store($0)) }, onClose: state.back)
+        case .cart:
+            CartView(open: state.open, openApp: { state.show(.store($0)) }, onClose: state.back)
+        case .account:
+            AccountView(open: state.open, openApp: { state.show(.store($0)) }, onClose: state.back)
         }
     }
 
     @ViewBuilder private var destinationView: some View {
         switch state.destination ?? .all {
         case .store:
-            StoreView(store: state.storeModel, library: store) { game in
-                state.destination = .all
-                state.selectedID = game.appid
-            }
+            StoreHomeView(open: state.open, openApp: { state.show(.store($0)) })
         case .friends:
             FriendsView(openProfile: { state.show(.profile($0)) }, chatWith: state.chatWith)
                 .onAppear { state.chatWith = nil }
@@ -329,7 +347,7 @@ struct Sidebar: View {
             group("Vapor", [.runtimes, .settings], counts: false)
             Spacer()
             AccountMenu(openProfile: { state.show(.profile($0)) },
-                        openAccount: { open("https://store.steampowered.com/account/") })
+                        openAccount: { state.show(.account) })
         }
         .padding(.top, 52)          // clear the window's traffic lights
         .padding(.bottom, 18)

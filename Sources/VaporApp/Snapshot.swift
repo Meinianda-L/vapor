@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import VaporKit
-import WebKit
 
 /// Renders whole screens (sidebar, toolbar and all) to PNG. The window is fully
 /// transparent, ignores the mouse and the app never activates, so nothing appears.
@@ -37,8 +36,6 @@ enum Snapshot {
         } else {
             skip("detail-install.png", "no owned Windows game is uninstalled")
         }
-        // Store: give the engine a moment to reach Steam's UI so the page is signed in, then open
-        // an app page and composite the web content (rendered out of process) with the native chrome.
         func spin(_ seconds: TimeInterval, until done: () -> Bool) {
             let deadline = Date().addingTimeInterval(seconds)
             while Date() < deadline && !done() { RunLoop.current.run(until: Date().addingTimeInterval(0.25)) }
@@ -72,19 +69,13 @@ enum Snapshot {
         state.destination = .downloads
         capture(state, to: dir.appendingPathComponent("downloads.png"))
         if online { captureEulaStep(state, to: dir.appendingPathComponent("install-eula.png")) } else { skip("install-eula.png", offline) }
+        // The store front loads in its view's task and keeps what it fetched: the first capture
+        // starts the load, the second shows it.
         state.destination = .store
-        let sm = state.storeModel
-        if online { Task { await sm.link(to: state.engine.ui) }; spin(10) { sm.linked } }
-        sm.go("app/714010/")
-        spin(3) { sm.loading }
-        spin(25) { !sm.loading }
-        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
-        var probe: Any?
-        sm.webView.evaluateJavaScript("(() => { const b = document.querySelector('#vapor_action'); const owned = document.querySelector('.game_area_already_owned'); (b || owned)?.scrollIntoView({block: 'start'}); window.scrollBy(0, -120); return (b ? 'vapor_action: ' + b.innerText.replace(/\\s+/g, ' ') : 'no vapor_action') + ' | owned banner: ' + !!owned; })()") { r, e in probe = r ?? e }
-        spin(3) { probe != nil }
-        print("store probe:", probe ?? "nil")
-        RunLoop.current.run(until: Date().addingTimeInterval(1))
-        capture(state, to: dir.appendingPathComponent("store.png"), web: sm.webView)
+        if online { ensureOnline() }
+        capture(state, to: dir.appendingPathComponent("store.png"))
+        RunLoop.current.run(until: Date().addingTimeInterval(8))
+        capture(state, to: dir.appendingPathComponent("store.png"))
         // Native pages load in the view's task; fetch first so the capture shows the page, not its skeleton.
         for (name, appid) in [("storepage-owned.png", UInt32(730)), ("storepage.png", UInt32(1091500))] {
             var page: StorePage??
@@ -142,7 +133,7 @@ enum Snapshot {
                 root: AnyView(InstallFlowSheet(run: run).environmentObject(state.engine).background(Theme.background)))
     }
 
-    static func capture(_ state: AppState, to url: URL, size: NSSize = NSSize(width: 1320, height: 860), web: WKWebView? = nil,
+    static func capture(_ state: AppState, to url: URL, size: NSSize = NSSize(width: 1320, height: 860),
                         root: AnyView? = nil) {
         // Borderless windows are not pulled back on-screen, so this one renders fully
         // (opaque, so SwiftUI draws) while sitting outside every display.
@@ -168,27 +159,7 @@ enum Snapshot {
         ctx.scaleBy(x: scale, y: scale)
         ctx.translateBy(x: 0, y: size.height)      // AppKit-hosted layers are flipped
         ctx.scaleBy(x: 1, y: -1)
-        if let web {
-            // Paint the page first; the native chrome (toolbar, app bar) is rendered on top.
-            var image: NSImage?
-            let config = WKSnapshotConfiguration()
-            web.takeSnapshot(with: config) { img, _ in image = img }
-            let wait = Date().addingTimeInterval(10)
-            while image == nil && Date() < wait { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
-            let frame = web.convert(web.bounds, to: host)
-            layer.render(in: ctx)
-            if let cg = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                ctx.saveGState()
-                ctx.translateBy(x: frame.minX, y: frame.maxY)
-                ctx.scaleBy(x: 1, y: -1)
-                ctx.draw(cg, in: CGRect(origin: .zero, size: frame.size))
-                ctx.restoreGState()
-            }
-            // Re-render only the overlay bar region by rendering the whole tree again with the
-            // web view hidden would cover the page, so overlay views are captured below instead.
-        } else {
-            layer.render(in: ctx)
-        }
+        layer.render(in: ctx)
         window.orderOut(nil)
         window.close()
         guard let image = ctx.makeImage() else { return }

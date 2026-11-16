@@ -32,12 +32,12 @@ final class WebPanelModel: NSObject, ObservableObject, WKNavigationDelegate, WKU
 
     override init() {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = WKWebsiteDataStore(forIdentifier: StoreModel.dataStoreID)
+        config.websiteDataStore = WKWebsiteDataStore(forIdentifier: SteamWebSession.dataStoreID)
         let content = WKUserContentController()
         content.addUserScript(WKUserScript(source: Self.chromeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController = content
         webView = WKWebView(frame: .zero, configuration: config)
-        webView.customUserAgent = StoreModel.browserAgent
+        webView.customUserAgent = SteamWebSession.browserAgent
         webView.allowsBackForwardNavigationGestures = true
         super.init()
         webView.navigationDelegate = self
@@ -118,7 +118,7 @@ final class WebPanelModel: NSObject, ObservableObject, WKNavigationDelegate, WKU
         }
         guard url.map({ SteamLink.isWeb($0) || $0.absoluteString.isEmpty || $0.absoluteString == "about:blank" }) ?? true else { return nil }
         let child = WKWebView(frame: .zero, configuration: configuration)
-        child.customUserAgent = StoreModel.browserAgent
+        child.customUserAgent = SteamWebSession.browserAgent
         child.navigationDelegate = self
         child.uiDelegate = self
         let size = CGSize(width: windowFeatures.width.map { CGFloat($0.doubleValue) } ?? 520,

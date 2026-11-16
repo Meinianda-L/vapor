@@ -28,6 +28,8 @@ struct StorePage: Sendable {
     var languages = ""
     var metacritic: Int?
     var dlc: [Int] = []
+    /// Packages that sell the app; the first is the plain purchase.
+    var packages: [Int] = []
 
     private static func url(_ any: Any?) -> URL? {
         guard let s = any as? String, !s.isEmpty else { return nil }
@@ -73,6 +75,7 @@ struct StorePage: Sendable {
         p.languages = d["supported_languages"] as? String ?? ""
         p.metacritic = (d["metacritic"] as? [String: Any])?["score"] as? Int
         p.dlc = d["dlc"] as? [Int] ?? []
+        p.packages = d["packages"] as? [Int] ?? []
         return p
     }
 
@@ -163,9 +166,12 @@ struct StorePageView: View {
     @State private var viewing: Int?
     @State private var showRequirements = false
     @State private var installing = false
+    /// What the cart and wishlist buttons did this visit; nil while untouched.
+    @State private var carted: Bool?
+    @State private var wished: Bool?
     @State private var attempt = 0
 
-    private var storeURL: URL { URL(string: "https://store.steampowered.com/app/\(appid)/") ?? URL(fileURLWithPath: "/") }
+    private var cartURL: URL { URL(string: "https://store.steampowered.com/cart/") ?? URL(fileURLWithPath: "/") }
 
     var body: some View {
         ScrollView {
@@ -287,7 +293,6 @@ struct StorePageView: View {
                 }
             }
         }
-        Button("在 Steam 网页中打开") { open(storeURL) }.buttonStyle(.link).font(.system(size: 12))
     }
 
     private func facts(_ p: StorePage) -> some View {
@@ -337,14 +342,28 @@ struct StorePageView: View {
                         Text(price.initial).font(.system(size: 12)).strikethrough().foregroundStyle(Theme.tertiary)
                     }
                     Text(price.final).font(.system(size: 17, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.text)
-                    actionButton("加入购物车", prominent: true) { open(storeURL) }
+                    if carted == true {
+                        Button("已加入购物车 · 查看") { open(cartURL) }.buttonStyle(.link).font(.system(size: 12.5))
+                    } else if let pkg = p.packages.first {
+                        actionButton(carted == false ? "重试加入购物车" : "加入购物车", prominent: true) {
+                            Task { carted = (try? await engine.ui.addToCart(.init(.package, UInt32(pkg)))) != nil }
+                        }
+                    }
                 } else if p.isFree {
                     Text("免费").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
-                    actionButton("免费开始", prominent: true) { open(storeURL) }
+                    actionButton("免费开始", prominent: true) { installing = true }
+                        .disabled(engine.steam == nil || engine.busy)
                 } else if p.comingSoon {
                     Text("尚未发行").font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 }
-                Button("加入愿望单") { open(storeURL) }.buttonStyle(.link).font(.system(size: 12.5))
+                if wished == true {
+                    Text("已在愿望单中").font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
+                } else {
+                    Button(wished == false ? "重试加入愿望单" : "加入愿望单") {
+                        Task { wished = (try? await engine.ui.addToWishlist(appid)) != nil }
+                    }
+                    .buttonStyle(.link).font(.system(size: 12.5))
+                }
             }
         }
     }
