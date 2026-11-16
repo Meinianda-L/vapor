@@ -1,0 +1,32 @@
+name: Bug report / 问题报告
+description: Something in Vapor does not work as it should. / Vapor 的某个功能不正常。
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / 发生了什么
+      description: What you did, what you expected, and what happened instead. / 你做了什么，预期是什么，实际发生了什么。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Vapor version or commit / Vapor 版本或提交
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version / Mac 型号和 macOS 版本
+      placeholder: MacBook Pro M3, macOS 15.1
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / 日志
+      description: |
+        Steam's logs are in the prefix under drive_c/Program Files (x86)/Steam/logs. Remove anything personal before pasting.
+        Steam 的日志在 Wine 环境的 drive_c/Program Files (x86)/Steam/logs 下。粘贴前请删去个人信息。
+      render: text
