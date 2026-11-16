@@ -1,0 +1,40 @@
+name: Game compatibility / 游戏兼容性
+description: Report how a game runs under Vapor. / 报告某个游戏在 Vapor 下的运行情况。
+labels: [compatibility]
+body:
+  - type: input
+    id: game
+    attributes:
+      label: Game and Steam AppID / 游戏及 Steam AppID
+      placeholder: Counter-Strike 2 (730)
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result / 结果
+      options:
+        - Runs well / 运行良好
+        - Runs with problems / 能运行但有问题
+        - Starts but unplayable / 能启动但无法游玩
+        - Does not start / 无法启动
+    validations:
+      required: true
+  - type: dropdown
+    id: renderer
+    attributes:
+      label: Renderer / 图形后端
+      options: [DXMT, D3DMetal, DXVK, WineD3D]
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version / Mac 型号和 macOS 版本
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / 说明
+      description: Frame rate, settings, workarounds, crashes. / 帧率、画质设置、解决办法、崩溃情况。
