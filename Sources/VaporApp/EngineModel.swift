@@ -42,6 +42,14 @@ final class EngineModel: ObservableObject {
     /// Friend conversations with history or unread messages, and the notification tray's unread count.
     @Published private(set) var chats: [SteamUI.ChatSummary] = []
     @Published private(set) var unreadNotifications = 0
+    /// The Steam window or question to show now (see SteamDialogs); Steam's own window for it never opens.
+    @Published private(set) var steamDialog: SteamUI.Dialog?
+    /// Games Steam itself is launching (steam://run, a game restarting through Steam), for LaunchStatusView.
+    @Published private(set) var launches: [SteamUI.Launch] = []
+    @Published private(set) var steamShutdown: SteamUI.Shutdown?
+    private var steamDialogs: [SteamUI.Dialog] = []
+    /// Answered here but maybe not yet gone from Steam's next snapshot.
+    private var answeredDialogs: Set<String> = []
     /// Dock progress and "download finished" notifications; only for the real app (notifications need
     /// a bundle, and snapshot rendering must stay invisible).
     private let signals: DownloadSignals? = Bundle.main.bundleIdentifier != nil
@@ -159,6 +167,14 @@ final class EngineModel: ObservableObject {
 
     private func apply(_ s: SteamUI.Snapshot) {
         if s.login != login { login = s.login }
+        // Steam asks things signed out too ("needs to be online"), so these come before the logon guard.
+        if let d = s.dialogs, d != steamDialogs {
+            steamDialogs = d
+            answeredDialogs.formIntersection(d.map(\.id))
+            showNextDialog()
+        }
+        if let l = s.launches, l != launches { launches = l }
+        if s.shutdown != steamShutdown { steamShutdown = s.shutdown }
         // The agent's heartbeat keeps pushing while the account is logged off; that must not revive the UI.
         guard isOnline || forcedUIOnline else { return }
         if !uiOnline { uiOnline = true }
@@ -220,6 +236,21 @@ final class EngineModel: ObservableObject {
         uninstallPrompt = nil
         uiAction { confirm ? try await $0.confirmUninstall() : try await $0.declineUninstall() }
     }
+
+    private func showNextDialog() {
+        let next = steamDialogs.first { !answeredDialogs.contains($0.id) }
+        if next != steamDialog { steamDialog = next }
+    }
+
+    /// Answers `steamDialog` with one of its button ids, or `SteamUI.Dialog.dismiss` (what closing Steam's window does).
+    func answerDialog(_ choice: String) {
+        guard let dialog = steamDialog else { return }
+        answeredDialogs.insert(dialog.id)
+        showNextDialog()
+        uiAction(requiresLogin: false) { try await $0.answerDialog(dialog.id, choice) }
+    }
+    func skipShaders(_ launch: SteamUI.Launch) { uiAction { try await $0.skipShaders(launch.gameActionID) } }
+    func cancelLaunch(_ launch: SteamUI.Launch) { uiAction { try await $0.cancelLaunch(launch.gameActionID) } }
 
     func acceptEulas() { uiAction { try await $0.acceptEulas() } }
     func continueInstall() { uiAction { try await $0.continueInstall() } }

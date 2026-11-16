@@ -202,6 +202,7 @@ public final class WindowsSteam: @unchecked Sendable {
     public func start(silent: Bool = true, allowNativeConflict: Bool = false) throws {
         if !allowNativeConflict && Self.nativeSteamRunning { throw StartError.nativeSteamRunning }
         if isRunning { return }
+        updatePrefixQuietly()
         suppressCrashDialogs()
         launch = (Date(), silent)
         var args = [steamRoot.appendingPathComponent("steam.exe").path, "-no-cef-sandbox",
@@ -236,6 +237,31 @@ public final class WindowsSteam: @unchecked Sendable {
                                   "/t", "REG_DWORD", "/d", "0", "/f"]) else { return }
         let deadline = Date().addingTimeInterval(30)
         while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+    }
+
+    /// Wine updates a prefix in the first process after its engine changed, and that update asks to download
+    /// Wine Mono and Gecko when the engine does not ship them. Run it first, alone, without those prompts; a
+    /// prefix created by an engine that had them keeps them.
+    func updatePrefixQuietly() {
+        let inf = engine.appendingPathComponent("share/wine/wine.inf")
+        guard let modified = (try? FileManager.default.attributesOfItem(atPath: inf.path))?[.modificationDate] as? Date else { return }
+        let stamp = try? String(contentsOf: prefix.appendingPathComponent(".update-timestamp"), encoding: .utf8)
+        guard Self.prefixNeedsUpdate(stamp: stamp, wineInf: modified) else { return }
+        var overrides = ["winemenubuilder.exe=d"]
+        for (dll, package) in [("mscoree", "mono"), ("mshtml", "gecko")] {
+            let dir = engine.appendingPathComponent("share/wine/\(package)")
+            if ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).isEmpty { overrides.append("\(dll)=d") }
+        }
+        guard let p = try? spawn(["wineboot", "-u"], env: ["WINEDLLOVERRIDES": overrides.joined(separator: ";")]) else { return }
+        let deadline = Date().addingTimeInterval(180)
+        while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.5) }
+    }
+
+    /// Wine's own test: `.update-timestamp` holds wine.inf's mtime in seconds, or "disable".
+    static func prefixNeedsUpdate(stamp: String?, wineInf modified: Date) -> Bool {
+        let s = stamp?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if s == "disable" { return false }
+        return Int(s) != Int(modified.timeIntervalSince1970)
     }
 
     /// When and how the client was last started by this process.

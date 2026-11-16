@@ -212,6 +212,7 @@ struct RootView: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.background)
+                .overlay(alignment: .bottom) { LaunchStatusView().padding(.bottom, 20) }
                 .overlay { WebPanel(model: state.web) }
                 .disabled(signingIn)
                 .overlay { if signingIn { LoginView() } }
@@ -220,6 +221,7 @@ struct RootView: View {
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
+        .steamDialogs()   // reads the engine, so it must sit inside .environmentObject
         .environmentObject(engine)
         .environmentObject(state)
         .environment(\.openURL, OpenURLAction { state.open($0); return .handled })

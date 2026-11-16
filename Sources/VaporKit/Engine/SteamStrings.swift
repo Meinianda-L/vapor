@@ -7,13 +7,16 @@ public struct SteamStrings: Sendable {
 
     public init(table: [String: String]) { self.table = table }
 
-    /// Loads `steamui_<language>-json.js` (falling back to English) from a Steam install.
+    /// Loads `shared_` and `steamui_<language>-json.js` (falling back to English) from a Steam install. The
+    /// shared bundle holds the plain buttons (Button_OK, Button_Cancel …); steamui wins where both have a key.
     public init(steamRoot: URL, language: String = "schinese") {
         let dir = steamRoot.appendingPathComponent("steamui/localization")
         var table: [String: String] = [:]
         for lang in ["english", language] where lang == "english" || language != "english" {
-            guard let text = try? String(contentsOf: dir.appendingPathComponent("steamui_\(lang)-json.js"), encoding: .utf8) else { continue }
-            table.merge(Self.parse(bundle: text)) { $1 }
+            for bundle in ["shared", "steamui"] {
+                guard let text = try? String(contentsOf: dir.appendingPathComponent("\(bundle)_\(lang)-json.js"), encoding: .utf8) else { continue }
+                table.merge(Self.parse(bundle: text)) { $1 }
+            }
         }
         self.table = table
     }
@@ -21,7 +24,9 @@ public struct SteamStrings: Sendable {
     public var isEmpty: Bool { table.isEmpty }
 
     /// `key` without the leading '#'; `%1$s`-style arguments are substituted in order.
-    public func callAsFunction(_ key: String, _ args: String...) -> String? {
+    public func callAsFunction(_ key: String, _ args: String...) -> String? { text(key, args) }
+
+    public func text(_ key: String, _ args: [String]) -> String? {
         guard var s = table[key] else { return nil }
         for (i, a) in args.enumerated() { s = s.replacingOccurrences(of: "%\(i + 1)$s", with: a) }
         return s

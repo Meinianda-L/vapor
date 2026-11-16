@@ -132,6 +132,7 @@ public final class SteamUI: @unchecked Sendable {
             enabled.value = true
             _ = try await c.call("Inspector.enable", [:])
             try await prime(c)
+            keepAlive(c)
             return c
         } catch {
             c.close(error)
@@ -142,10 +143,20 @@ public final class SteamUI: @unchecked Sendable {
     /// Injects the agent unless this version is already there, then subscribes. Both are idempotent, so
     /// several clients (the app, the CLI) share one agent; `__vaporEmit` reaches every session that bound it.
     private func prime(_ c: CDPConnection) async throws {
-        let r = try await c.call("Runtime.evaluate", ["expression": "\(Self.injection)\nwindow.__vapor.subscribe();", "returnByValue": true])
+        let r = try await c.call("Runtime.evaluate", ["expression": "\(Self.injection)\nwindow.__vapor.subscribe(); window.__vapor.ping?.();", "returnByValue": true])
         if let details = r["exceptionDetails"] as? [String: Any] {
             let exception = details["exception"] as? [String: Any]
             throw Failure.script(exception?["description"] as? String ?? details["text"] as? String ?? "?")
+        }
+    }
+
+    /// Tells the agent a client is listening; without that it leaves Steam's own windows alone (see `attended`).
+    private func keepAlive(_ c: CDPConnection) {
+        Task.detached {
+            while !c.isClosed {
+                _ = try? await c.call("Runtime.evaluate", ["expression": "window.__vapor?.ping?.()", "returnByValue": true], timeout: 10)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
         }
     }
 
@@ -379,7 +390,81 @@ public final class SteamUI: @unchecked Sendable {
         public let chats: [ChatSummary]?         // friend conversations with history or unread messages
         public let unreadNotifications: Int?
         public let login: Login?                 // a Vapor-driven sign-in in progress
+        public let dialogs: [Dialog]?            // Steam's windows and questions, waiting for an answer, oldest first
+        public let launches: [Launch]?           // games Steam is launching (steam://run, a game restarting through Steam)
+        public let shutdown: Shutdown?           // Steam is shutting down or restarting
+        public let windows: [HiddenWindow]?      // Steam windows that opened and were kept hidden, newest last
     }
+
+    /// A window or question Steam would have drawn itself (cloud conflict, launch option, launch error, any
+    /// confirm). Its own window never shows; Vapor presents it and answers with `answerDialog(_:_:)`.
+    public struct Dialog: Decodable, Sendable, Equatable, Identifiable {
+        public let id: String
+        /// eula, launchOption, cloudConflict, cloudSyncFailed, cloudPending, cdkey, confirm, launchError, or generic (read off Steam's page).
+        public let kind: String
+        public let appid: UInt32
+        public let title: Text?
+        public let message: [Text]
+        public let note: Text?
+        public let buttons: [Choice]
+        public let eulas: [Install.Eula]?
+        public let keys: [Install.Key]?
+        public let code: Int                   // launchError: EAppUpdateError
+        public let details: String?
+        public let localTime: Int              // cloudConflict: newest local and cloud file times
+        public let remoteTime: Int
+
+        /// Steam's English text, with the token it came from when there is one, so Vapor can use Steam's Chinese string.
+        public struct Text: Decodable, Sendable, Equatable, Hashable {
+            public let text: String
+            public let key: String?
+            public let args: [String]
+        }
+        public struct Choice: Decodable, Sendable, Equatable, Identifiable, Hashable {
+            public let id: String
+            public let label: Text
+            public let role: String?           // default, cancel, destructive, disabled
+        }
+
+        public var cancelChoice: Choice? { buttons.first { $0.role == "cancel" } }
+        /// The answer that closes the dialog the way Steam's window close box would.
+        public static let dismiss = "dismiss"
+    }
+
+    /// One launch as Steam's game action reports it (the "正在准备启动" window Steam no longer shows).
+    public struct Launch: Decodable, Sendable, Equatable, Identifiable {
+        public let gameActionID: Int
+        public let appid: UInt32
+        public let task: String               // Starting, UpdatingAppInfo, SynchronizingCloud, DownloadingDepots, ProcessingShaderCache, CreatingProcess…
+        public let details: String
+        public let request: String?           // the question it waits on (see `dialogs`), or ProcessingShaderCache (skipShaders)
+        public let done: Int64
+        public let total: Int64
+        public let secondsRemaining: Int
+        public var id: Int { gameActionID }
+        public var fraction: Double? { total > 0 && done <= total ? Double(done) / Double(total) : nil }
+    }
+
+    public struct Shutdown: Decodable, Sendable, Equatable {
+        public let state: Int                 // EShutdownState
+        public let reason: Int                // EShutdownReason
+        public let appid: UInt32              // the game or download Steam waits for
+        public let allowForceQuit: Bool
+        public let failed: Bool
+    }
+
+    public struct HiddenWindow: Decodable, Sendable, Equatable {
+        public let title: Dialog.Text?
+        public let time: Int
+    }
+
+    /// Answers a dialog with one of its `buttons` ids, or "dismiss" (what closing Steam's window would do).
+    public func answerDialog(_ id: String, _ choice: String) async throws {
+        _ = try await agent("answerDialog(\(literal(id)), \(literal(choice)))")
+    }
+    /// Steam's 跳过 on the Vulkan shader step of a launch.
+    public func skipShaders(_ gameActionID: Int) async throws { _ = try await agent("skipShaders(\(gameActionID))") }
+    public func cancelLaunch(_ gameActionID: Int) async throws { _ = try await agent("cancelLaunch(\(gameActionID))") }
 
     /// The library's own organisation (collectionStore), synced by Steam across devices.
     public struct Shelves: Decodable, Sendable, Equatable {
@@ -615,7 +700,7 @@ public final class SteamUI: @unchecked Sendable {
 
     // MARK: - Agent
 
-    static let agentVersion = 15
+    static let agentVersion = 16
 
     /// Replaces the agent only when it is another version and idle: every client shares one agent, and an
     /// install or probe in flight must keep the agent that is driving it.
@@ -666,15 +751,18 @@ public final class SteamUI: @unchecked Sendable {
       };
 
       const mainWindow = () => g(() => SteamUIStore.WindowStore.MainWindowInstance.BrowserWindow);
+      let mainAllowed = false;                  // Vapor asked for Steam's own window (debugging); until it is hidden again
       const showMain = show => {
         const w = mainWindow()?.SteamClient?.Window; if (!w) return false;
+        mainAllowed = !!show;
         if (show) { w.ShowWindow(); w.BringToFront(); } else w.HideWindow();
         return true;
       };
 
       // --- take over Steam's wizard callbacks ---------------------------------------------------
-      const taken = { RegisterForShowInstallWizard: 'OnShowInstallWizard', RegisterForShowConfirmUninstall: 'OnShowConfirmUninstall',
-                      RegisterForShowFailedUninstall: 'OnShowFailedUninstall' };
+      const taken = { RegisterForShowInstallWizard: ['Installs', 'OnShowInstallWizard'], RegisterForShowConfirmUninstall: ['Installs', 'OnShowConfirmUninstall'],
+                      RegisterForShowFailedUninstall: ['Installs', 'OnShowFailedUninstall'],
+                      RegisterForGameActionUserRequest: ['Apps', 'OnGameActionUserRequest'], RegisterForGameActionShowError: ['Apps', 'OnGameActionShowError'] };
       const detached = [];
       const ours = [];
       const takeover = () => {
@@ -688,8 +776,11 @@ public final class SteamUI: @unchecked Sendable {
           if (i >= 0 && handles[i]?.unregister) { handles[i].unregister(); detached.push([name, i]); }
         }
         if (!detached.length) return false;
-        for (const [name] of detached) ours.push(SteamClient.Installs[name](handlers[name]));
+        for (const [name] of detached) ours.push(SteamClient[taken[name][0]][name](handlers[name]));
         im.OnShowInstallWizard({ eInstallState: 0 });   // drop any dialog Steam already had up
+        im.ShowGameLaunchingDialog = () => {};          // Steam's "launching" window; the launch shows in Vapor instead
+        g(() => im.m_rgShowLaunchingDialog.splice(0));
+        resumeLaunches();
         emit();
         return true;
       };
@@ -786,6 +877,12 @@ public final class SteamUI: @unchecked Sendable {
                                         problem: 'uninstall', done: true, eulas: null, keys: null };
           emit(true);
         },
+        // Without Vapor watching, Steam's own launch dialogs come back, so a launch never waits on nobody.
+        RegisterForGameActionUserRequest: (...a) => {
+          if (!attended()) return im.OnGameActionUserRequest(...a);
+          onLaunchRequest(...a).catch(e => console.error('[vapor] launch request', e)).finally(() => emit());
+        },
+        RegisterForGameActionShowError: (...a) => { if (attended()) onLaunchError(...a); else im.OnGameActionShowError(...a); },
       };
 
       // --- snapshot ---------------------------------------------------------------------------
@@ -1005,6 +1102,377 @@ public final class SteamUI: @unchecked Sendable {
         return hidden;
       };
 
+      // --- Steam's own windows and questions, answered in Vapor ---------------------------------------
+      // Every popup Steam opens is created hidden, and every modal is recorded; what asks the user something
+      // becomes a dialog in the snapshot, answered with answerDialog(). Clients ping; when none has for a
+      // while (Vapor quit), nothing is taken over, so Steam stays usable on its own.
+      let lastPing = 0;
+      const attended = () => Date.now() - lastPing < 15000;
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const fill = (s, args) => args.reduce((t, a, i) => t.split('%' + (i + 1) + '$s').join(String(a ?? '')), s);
+      // Steam's text for one of its tokens, with the token so Vapor can show its Chinese string instead.
+      const T = (key, ...args) => ({ text: fill(String(g(() => LocalizationManager.LocalizeString('#' + key)) ?? key), args), key, args: args.map(a => String(a ?? '')) });
+      let reverse = null;
+      // Text read back from Steam's page; the token is found when the text is exactly one of Steam's strings.
+      const plain = s => {
+        s = String(s ?? '').trim();
+        if (!s) return null;
+        if (!reverse?.size) {
+          reverse = new Map();
+          // Several tokens share a text ("Close"); the plain button and dialog ones read best in Chinese too.
+          const plainKey = k => /^(Button_|Generic_|Dialog_)/.test(k);
+          for (const [k, v] of g(() => LocalizationManager.m_mapTokens) || []) {
+            if (typeof v !== 'string') continue;
+            const t = v.trim(), had = reverse.get(t);
+            if (had == null || (plainKey(k) && !plainKey(had))) reverse.set(t, k);
+          }
+        }
+        return { text: s, key: reverse.get(s) ?? null, args: [] };
+      };
+      const choice = (id, label, role = null) => ({ id: String(id), label, role });
+
+      // Ids stay unique across agent versions, so a client's record of what it answered never matches a newer dialog.
+      let dialogs = [], dialogSeq = 0;
+      const dialogBase = Date.now().toString(36);
+      const addDialog = d => { d.id = dialogBase + '-' + (++dialogSeq); dialogs.push(d); emit(); return d; };
+      const dropDialog = d => { const i = dialogs.indexOf(d); if (i >= 0) { dialogs.splice(i, 1); emit(); } };
+      const dialogJSON = d => ({ id: d.id, kind: d.kind, appid: num(d.appid), title: d.title ?? null, message: (d.message || []).filter(Boolean),
+        note: d.note ?? null, buttons: d.buttons || [], eulas: d.eulas ?? null, keys: d.keys ?? null, code: num(d.code), details: d.details ?? null,
+        localTime: num(d.localTime), remoteTime: num(d.remoteTime) });
+
+      // Buttons of a rendered Steam dialog, outermost clickable elements with a label (window controls have none).
+      const readDom = root => {
+        if (!root) return null;
+        const all = [...root.querySelectorAll('button, .DialogButton, [role=button]')].filter(b => !b.closest('.ModalPosition_Dismiss'));
+        const els = all.filter(b => !all.some(o => o !== b && o.contains(b)) && (b.innerText || '').trim());
+        const labels = new Set(els.map(b => b.innerText.trim()));
+        const header = root.querySelector('.DialogHeader, [class*=DialogHeader]')?.innerText?.trim() || null;
+        const text = root.innerText || '';
+        const lines = [...new Set(text.split('\n').map(s => s.trim()).filter(s => s && !labels.has(s) && s !== header))];
+        return { header, lines, buttons: els.map(b => ({ el: b, label: plain(b.innerText), disabled: !!b.disabled })), length: text.length };
+      };
+      const fromDom = (d, root) => {
+        const c = readDom(root);
+        if (!c || (!c.buttons.length && !c.lines.length)) return false;
+        d.root = root;
+        if (c.header) d.title = plain(c.header);
+        if (c.lines.length) d.message = c.lines.slice(0, 12).map(plain);
+        if (c.buttons.length) d.buttons = c.buttons.map((b, i) => choice('button:' + i, b.label, b.disabled ? 'disabled' : null));
+        return true;
+      };
+      // Clicks the button as it is rendered now, so Steam's own handler decides what happens.
+      const click = (d, c) => {
+        const i = Number(String(c).split(':')[1]);
+        const b = readDom(d.root?.isConnected ? d.root : d.popup?.window?.document?.body)?.buttons[i];
+        if (!b || b.disabled) return false;
+        b.el.click();
+        return true;
+      };
+      // A click that did not close the dialog (a tab, a checkbox) puts it back, as it looks now.
+      const recheck = d => setTimeout(() => {
+        if (d.closed || dialogs.includes(d) || disposed) return;
+        const root = d.popup ? d.popup.window?.document?.body : d.root;
+        if (root?.isConnected === false) return;
+        fromDom(d, root);
+        dialogs.push(d); emit();
+      }, 700);
+
+      // --- game launches ---------------------------------------------------------------------------
+      const launches = new Map();               // gameActionID → state
+      let launchTimer = null;
+      const appOf = gameid => num(g(() => appStore.GetAppOverviewByGameID(String(gameid))?.appid)) || num(gameid);
+      const nameOf = appid => g(() => appStore.GetAppOverviewByAppID(appid)?.display_name) || '';
+      const pollLaunches = () => {
+        if (launchTimer || disposed) return;
+        launchTimer = setInterval(() => {
+          if (!launches.size) { clearInterval(launchTimer); launchTimer = null; return; }
+          for (const [id, l] of launches) g(() => SteamClient.Apps.GetGameActionDetails(id, d => {
+            const next = { done: num(parseInt(d?.strNumDone)), total: num(parseInt(d?.strNumTotal)), secondsRemaining: num(d?.nSecondsRemaing) };
+            if (next.done !== l.done || next.total !== l.total || next.secondsRemaining !== l.secondsRemaining) { Object.assign(l, next); emit(); }
+          }));
+        }, 1000);
+      };
+      const launchStarted = (id, gameid, action) => {
+        if (action !== 'LaunchApp' || launches.has(id)) return;
+        launches.set(id, { gameActionID: num(id), appid: appOf(gameid), task: 'Starting', details: '', request: null, done: 0, total: 0, secondsRemaining: 0 });
+        pollLaunches(); emit();
+      };
+      const launchTask = (id, gameid, action, task, details) => {
+        const l = launches.get(id); if (!l) return;
+        Object.assign(l, { task: String(task || ''), details: String(details || '') });
+        if (l.request === 'ProcessingShaderCache' && task !== 'ProcessingShaderCache') l.request = null;
+        emit();
+      };
+      const launchEnded = id => {
+        launches.delete(id);
+        for (const d of dialogs.filter(d => d.gameActionID === id)) dropDialog(d);
+        emit();
+      };
+      // Steam's "always launch this way", stored by its launch-option dialog; -1 when there is none.
+      const savedLaunchOption = async (appid, opts) => {
+        try {
+          locate();
+          const id = Object.keys(req.m).find(k => String(req.m[k]).includes('DefaultLaunchOption'));
+          const src = String(req.m[id]), mod = req(id);
+          const keyOf = Object.values(mod).find(f => typeof f === 'function' && String(f).includes('DefaultLaunchOption'));
+          const m = src.match(/new ([\w$]+)\.([\w$]+);let [\w$]+=await [\w$]+\.GetString/);
+          const v = m && src.match(new RegExp('[,;\\s]' + m[1].replace('$', '\\$') + '=t\\((\\d+)\\)'));
+          const saved = await new (req(v[1])[m[2]])().GetString(keyOf(appid, opts));
+          const n = parseInt(saved);
+          return saved?.length && n >= 0 && n < opts.length ? n : -1;
+        } catch { return -1; }
+      };
+      const optionLabel = o => {
+        const d = String(o.strDescription || '');
+        return d.startsWith('#') ? T(d.slice(1), o.strGameName || '') : plain(d || o.strGameName) ?? T('GameAction_Play');
+      };
+      // What Steam's LaunchApp action asks for, as its own dialogs would (CLaunchGameAction.OnGameActionUserRequest).
+      const onLaunchRequest = async (id, gameid, action, task, details) => {
+        const appid = appOf(gameid), name = nameOf(appid);
+        const l = launches.get(id); if (l) l.request = task;
+        const go = v => { if (l) l.request = null; SteamClient.Apps.ContinueGameAction(id, String(v)); g(() => SteamUIStore.SetRunningApp(appid)); };
+        const ask = (kind, title, message, buttons, extra = {}) => addDialog({
+          kind, appid, gameActionID: id, title, message, ...extra.fields,
+          buttons: extra.noCancel ? buttons : [...buttons, choice('cancel', extra.cancel ?? T('Button_Cancel'), 'cancel')],
+          answer: async c => {
+            if (c === 'cancel' || c === 'dismiss') { if (!extra.noCancel) return SteamClient.Apps.CancelGameAction(id); c = buttons[0].id; }
+            await extra.accept?.(c);
+            go(c);
+          } });
+        switch (task) {
+          case 'CreatingProcess': case 'ShowInterstitials': return go(task);
+          case 'ShowEula': {
+            const list = (await SteamClient.Apps.LoadEula(appid)) || [];
+            if (!list.length) return go(task);
+            const eulas = await Promise.all(list.map(async e => ({ id: String(e.id ?? ''), url: e.url || '', version: num(e.version), ...(await eulaContent(e)) })));
+            return ask('eula', T('EulaDialog_Header'), [T('Installer_Eula', name)], [choice(task, T('Installer_EulaAccept'), 'default')],
+              { fields: { eulas }, accept: async () => { for (const e of eulas) await SteamClient.Apps.MarkEulaAccepted(appid, e.id, e.version); } });
+          }
+          case 'ShowLaunchOption': {
+            const opts = (await SteamClient.Apps.GetLaunchOptionsForApp(appid)) || [];
+            const saved = await savedLaunchOption(appid, opts);
+            if (saved >= 0) return go(opts[saved].nIndex);
+            if (opts.length === 1) return go(opts[0].nIndex);
+            return ask('launchOption', plain(name) ?? T('GameAction_Play'), [T('LaunchOptionsDialog_MakeSelection', name)],
+              opts.map((o, i) => choice(num(o.nIndex), optionLabel(o), i === 0 ? 'default' : null)), { fields: { note: T('LaunchOptionsDialog_SeeProperties') } });
+          }
+          case 'ShowVROculusOnly':
+            return ask('confirm', T('Steam_OculusOnlyGameWarning_Title'), [T(parseInt(details) ? 'Steam_OculusOnlyGameWarning_Desc' : 'Steam_IncorrectVRSDKWarning_Desc', name)],
+              [choice('1', T('Button_OK'), 'default')]);
+          case 'RunningInstallScript':
+            return ask('confirm', T('LaunchApp_InstallScript_Failed_Title'), [T('LaunchApp_InstallScript_Failed_Text')],
+              [choice('IgnoreInstallError', T('LaunchApp_InstallScript_Failed_Continue'), 'default')]);
+          case 'KickingOtherSession':
+            return ask('confirm', T('LaunchApp_OtherSessionPlaying_Title'), [T('LaunchApp_OtherSessionPlaying_Text', name, details)],
+              [choice('KickOtherSession', T('LaunchApp_ContineLaunch'), 'destructive')]);
+          case 'ShowGameArgs':
+            return ask('confirm', T('LaunchApp_ShowGameArgs_Title'), [T('LaunchApp_ShowGameArgs_Text', name, details)],
+              [choice(task, T('LaunchApp_ContineLaunch'), 'default')], { fields: { details: String(details || '') } });
+          case 'SynchronizingCloud': case 'SynchronizingControllerConfig': {
+            const controller = task === 'SynchronizingControllerConfig';
+            if (details === 'cloudconflict') {
+              let t = null;
+              if (!controller) try { t = await SteamClient.Apps.GetConflictingFileTimestamps(appid); } catch {}
+              return ask('cloudConflict', T(controller ? 'CloudConflict_ControllerConfigs_Header' : 'CloudConflict_AppLaunch_Header'),
+                [controller ? T('CloudConflict_ControllerConfigs_Description') : T('CloudConflict_AppLaunch_Description', name)],
+                [choice('KeepLocal', T(controller ? 'CloudConflict_ControllerConfigs_KeepLocal' : 'CloudConflict_KeepLocal')),
+                 choice('KeepRemote', T(controller ? 'CloudConflict_ControllerConfigs_KeepRemote' : 'CloudConflict_KeepRemote'))],
+                { fields: { note: T('CloudConflict_AppLaunch_Footer_Note'), localTime: t?.rtLocalTime, remoteTime: t?.rtRemoteTime } });
+            }
+            if (details === 'syncfailed')
+              return ask('cloudSyncFailed', T('CloudSyncFailed_AppLaunch_Header'), [T('CloudSyncFailed_AppLaunch_Warning', name), T('CloudSyncFailed_AppLaunch_Description')],
+                [choice('IgnoreCloud', T('CloudSyncFailed_AppLaunch_Continue'), 'destructive')], { cancel: T('CloudSyncFailed_AppLaunch_Cancel') });
+            if (details === 'pendingcloudsessions')
+              return ask('cloudPending', T('CloudPendingOps_Header'), [T('CloudPendingOps_Description')],
+                [choice('IgnorePendingCloudSessions', T('CloudPendingOps_Continue'), 'destructive')], { cancel: T('CloudPendingOps_Cancel') });
+            return go(details);
+          }
+          case 'ShowDurationControl': {
+            const body = { WaitingVerification: 'DurationControl_PlaytimeExceeded_Body_WaitingVerification', Maintenance: 'DurationControl_PlaytimeExceeded_Body_Maintenance',
+                           CheckFailed: 'Error_ErrorCommunicatingWithNetwork' }[details] || 'DurationControl_PlaytimeExceeded_Body_Night';
+            return ask('confirm', T('DurationControl_PlaytimeExceeded_Title'), [T(body)], [choice('', T('Button_Continue'), 'default')]);
+          }
+          case 'ProcessingShaderCache': return;    // progress in `launches`; skipShaders() answers it
+          case 'ShowCDKey': {
+            await g(() => SteamClient.Apps.RequestLegacyCDKeysForApp(appid));
+            let keys = [];
+            for (let i = 0; i < 10 && !keys.length; i++) {
+              keys = (g(() => appDetailsStore.GetAppDetails(appid)?.vecLegacyCDKeys) || []).filter(k => k?.strKey && k?.strName && k.eResult === 1)
+                .map(k => ({ appid, name: String(k.strName), key: String(k.strKey) }));
+              if (!keys.length) await sleep(300);
+            }
+            return ask('cdkey', T('GameAction_ShowCDKeys'), [T('GameAction_ShowCDKeys_Desc_NoCopy', name)],
+              [choice('', T('Generic_Close'), 'default'), choice('DontShowAgain', T('GameAction_ShowCDKeys_DontShowAgain'))], { fields: { keys }, noCancel: true });
+          }
+          default:
+            return ask('generic', plain(name) ?? T('Dialog_DefaultWindowTitle'), [plain(task + (details ? ' (' + details + ')' : ''))],
+              [choice(task, T('Button_Continue'), 'default')]);
+        }
+      };
+      // CLaunchGameAction.ShowAppLaunchErrorDialogInternal: Steam's reason for EAppUpdateError `code`.
+      const onLaunchError = (id, gameid, action, code, details) => {
+        const appid = appOf(gameid), reason = T('Steam_AppUpdateError_' + num(code));
+        addDialog({ kind: 'launchError', appid, gameActionID: id, code, details: details ? String(details) : null,
+                    title: plain(nameOf(appid)) ?? T('Dialog_DefaultWindowTitle'),
+                    message: [details ? T('AppLaunchError_Text_Long', reason.text, details) : T('AppLaunchError_Text', reason.text)],
+                    buttons: [choice('ok', T('Button_OK'), 'default')], answer: async () => {} });
+        emit();
+      };
+      // Launches already under way when the agent arrives; one waiting for an answer is asked again.
+      const resumeLaunches = async () => {
+        let list = [];
+        try { list = (await SteamClient.Apps.GetActiveGameActions()) || []; } catch {}
+        for (const a of list) {
+          if (a.strActionName !== 'LaunchApp') continue;
+          launchStarted(a.nGameActionID, a.gameid, a.strActionName);
+          launchTask(a.nGameActionID, a.gameid, a.strActionName, a.strTaskName, a.strTaskDetails);
+          if (a.bWaitingForUI && attended() && !dialogs.some(d => d.gameActionID === a.nGameActionID))
+            handlers.RegisterForGameActionUserRequest(a.nGameActionID, a.gameid, a.strActionName, a.strTaskName, a.strTaskDetails);
+        }
+      };
+
+      // --- popups: created hidden; dialogs read back from their page ------------------------------
+      const hidden = new Set();
+      let popupHooks = null, modalPatch = null, pendingModal = null, mainGuard = null;
+      const windows = [];                       // Steam windows kept hidden lately, for Vapor to show its own counterpart
+      const silent = new Set(['LibraryHome_MarketingMessages', 'PendingGifts_Title', 'SteamUI_ValveSurvey_Title']);
+      const isMenu = p => /^contextmenu_/.test(g(() => p.GetName()) || '');
+      const keepHidden = p => {
+        if (hidden.has(p) || isMenu(p) || p.window === mainWindow() || mainAllowed || !attended()) return;
+        hidden.add(p);
+        p.m_bCreateHidden = true;               // RenderInternal shows a popup unless it was created hidden
+        p.Focus = () => {};                     // and re-shows an existing one through Focus
+        const w = p.window;
+        p.__vaporVisibility = () => { if (w?.document?.visibilityState === 'visible') g(() => w.SteamClient.Window.HideWindow()); };
+        g(() => w.document.addEventListener('visibilitychange', p.__vaporVisibility));
+        g(() => p.__vaporVisibility());
+        const modal = pendingModal && Date.now() - pendingModal.at < 2000 ? pendingModal.d : null;
+        if (modal) { pendingModal = null; modal.popup = p; return; }
+        setTimeout(() => describePopup(p), 700);
+      };
+      const describePopup = p => {
+        if (disposed || g(() => p.BIsClosed())) return;
+        const doc = g(() => p.window.document); if (!doc) return;
+        if (dialogs.some(d => d.root?.ownerDocument === doc)) return;   // a modal inside it already asks
+        const title = plain(p.m_strTitle || doc.title);
+        if (title?.key && silent.has(title.key)) { g(() => p.Close()); return; }
+        // Tooltips, toasts and menus never ask anything; only dialog markup with a few buttons is a question,
+        // anything else is a window (settings, friends list, chat) Vapor has its own page for.
+        const quiet = num(p.m_rgParams?.eCreationFlags) & (4 | 512 | 65536);
+        const dialogLike = doc.body.classList.contains('ModalDialogBody') || !!doc.querySelector('.ModalPosition, .DialogContent');
+        const c = readDom(doc.body);
+        const shuttingDown = num(g(() => SteamUIStore.m_shutdownState.eShutdownState)) !== 0;
+        if (!quiet && dialogLike && !shuttingDown && c && c.buttons.length && c.buttons.length <= 6 && c.length < 2000) {
+          const d = { kind: 'generic', title, message: [], buttons: [], popup: p,
+                      answer: async ch => { if (ch !== 'dismiss' && click(d, ch)) return recheck(d); g(() => p.Close()); } };
+          fromDom(d, doc.body);
+          if (!c.header && title) d.title = title;
+          addDialog(d);
+        } else {
+          windows.push({ title, time: Math.floor(Date.now() / 1000) });
+          windows.splice(0, Math.max(0, windows.length - 10));
+          emit();
+        }
+      };
+      const released = p => {
+        hidden.delete(p);
+        for (const d of dialogs.filter(d => d.popup === p)) { d.closed = true; dropDialog(d); }
+      };
+      // Generic modals (ShowGenericConfirmDialog and the like) carry their text and callbacks as props.
+      const propButtons = props => [
+        ...(props.onOK ? [choice('ok', plain(props.strOKButtonText) ?? T('Button_OK'), 'default')] : []),
+        ...(props.onCancel ? [choice('cancel', plain(props.strCancelButtonText) ?? T('Button_Cancel'), 'cancel')] : []),
+      ];
+      const trackModal = (el, handle, title) => {
+        if (disposed || !el || mainAllowed || !attended() || el.props?.className === 'Hidden') return;   // the stand-in a popped-out modal leaves behind
+        const props = el.props || {};
+        const d = { kind: 'generic', appid: num(props.appid ?? props.appID), handle, props,
+                    title: plain(title) ?? plain(props.strTitle), message: [plain(props.strDescription)], buttons: propButtons(props),
+                    answer: async c => {
+                      if (c.startsWith('button:') && click(d, c)) return recheck(d);
+                      if (c === 'ok') await props.onOK?.(); else await props.onCancel?.();
+                      g(() => handle.Close());
+                      // A popup that only hosts this dialog (About, legacy popouts) goes with it, as its close box would do.
+                      const host = ownerPopup(d.root);
+                      if (host && g(() => host.window.document.body.classList.contains('ModalDialogBody'))) g(() => host.Close());
+                    } };
+        if (title != null) pendingModal = { d, at: Date.now() };
+        const before = new Set(modalRoots());
+        g(() => handle.ClosedPromise.then(() => { d.closed = true; dropDialog(d); }));
+        addDialog(d);
+        // In-window modals render into the (hidden) owner window's ModalPosition; popped-out ones into their own popup.
+        setTimeout(() => {
+          if (d.closed || disposed) return;
+          let root = d.popup ? g(() => d.popup.window.document.body) : null;
+          if (!root) {
+            const found = modalRoots().filter(e => !claimed.has(e) && !before.has(e));
+            const said = String(props.strTitle || props.strDescription || '');
+            root = (said && found.find(e => e.innerText.includes(said))) || found[found.length - 1] || null;
+            if (root) claimed.add(root);
+          }
+          if (!root || !fromDom(d, root)) return;
+          for (const x of dialogs.filter(x => x !== d && !x.handle && x.root?.ownerDocument === root.ownerDocument)) dropDialog(x);
+          emit();
+        }, 500);
+      };
+      const claimed = new WeakSet();
+      const modalRoots = () => [document, ...Array.from(g(() => g_PopupManager.GetPopups()) || []).map(p => g(() => p.window.document)).filter(Boolean)]
+        .flatMap(doc => [...doc.querySelectorAll('.ModalPosition')]);
+      const ownerPopup = root => root && Array.from(hidden).find(p => g(() => p.window.document) === root.ownerDocument);
+      const hookModals = () => {
+        if (modalPatch) return;
+        if (!locate()) return;
+        const mod = findModule('m_rgLegacyPopupModals=[]');
+        const P = mod && Object.values(mod).find(v => typeof v === 'function' && v.prototype?.ShowLegacyPopupModal)?.prototype;
+        if (!P?.ShowModalInternal) return;
+        const inline = P.ShowModalInternal, legacy = P.ShowLegacyPopupModal;
+        P.ShowModalInternal = function (el) { const h = inline.apply(this, arguments); g(() => trackModal(el, h, null)); return h; };
+        P.ShowLegacyPopupModal = function (title, el) { const h = legacy.apply(this, arguments); g(() => trackModal(el, h, String(title ?? ''))); return h; };
+        modalPatch = { P, inline, legacy, ours: [P.ShowModalInternal, P.ShowLegacyPopupModal] };
+      };
+      // Steam shows its main window on its own now and then (a second steam.exe, steam://open/main); hide it again.
+      const guardMain = () => {
+        const w = mainWindow();
+        if (!w || mainGuard?.w === w) return;
+        mainGuard?.off();
+        const on = () => {
+          const visible = w.document.visibilityState === 'visible';
+          if (!visible) mainAllowed = false;
+          else if (!mainAllowed && attended()) g(() => w.SteamClient.Window.HideWindow());
+        };
+        g(() => w.document.addEventListener('visibilitychange', on));
+        mainGuard = { w, off: () => g(() => w.document.removeEventListener('visibilitychange', on)) };
+      };
+      const hookWindows = () => {
+        if (disposed) return;
+        guardMain();
+        hookModals();
+        if (!window.g_PopupManager) return;
+        popupHooks ??= [g_PopupManager.AddPopupCreatedCallback(p => g(() => keepHidden(p))),
+                        g_PopupManager.AddPopupDestroyedCallback(p => g(() => released(p)))];
+        // Also catches a popup some other path showed (heartbeat).
+        if (!attended() || mainAllowed) return;
+        for (const p of Array.from(g_PopupManager.GetPopups())) {
+          if (isMenu(p) || p.window === mainWindow() || !g(() => p.BIsVisible())) continue;
+          keepHidden(p);
+          g(() => p.window.SteamClient.Window.HideWindow());
+        }
+      };
+      const releaseWindows = () => {
+        for (const h of popupHooks || []) g(() => h.Unregister());
+        popupHooks = null;
+        for (const p of hidden) { delete p.Focus; g(() => p.window.document.removeEventListener('visibilitychange', p.__vaporVisibility)); }
+        hidden.clear();
+        if (modalPatch) {
+          const { P, inline, legacy, ours: [a, b] } = modalPatch;
+          if (P.ShowModalInternal === a) P.ShowModalInternal = inline;
+          if (P.ShowLegacyPopupModal === b) P.ShowLegacyPopupModal = legacy;
+          modalPatch = null;
+        }
+        mainGuard?.off(); mainGuard = null;
+        clearInterval(launchTimer);
+      };
+
       const api = {
         version: \#(agentVersion),
         busy() { return !!probe || !!(run?.driven && !run.done); },
@@ -1019,8 +1487,14 @@ public final class SteamUI: @unchecked Sendable {
             ours.push(SteamClient.Downloads.RegisterForDownloadOverview(() => emit()));
             ours.push(SteamClient.InstallFolder.RegisterForInstallFolderChanges(() => emit()));
             ours.push(SteamClient.GameSessions?.RegisterForAppLifetimeNotifications?.(() => emit()));
-            heartbeat = setInterval(() => { takeover(); emit(); }, 5000);
+            ours.push(SteamClient.Apps.RegisterForGameActionStart(launchStarted));
+            ours.push(SteamClient.Apps.RegisterForGameActionTaskChange(launchTask));
+            ours.push(SteamClient.Apps.RegisterForGameActionEnd(launchEnded));
+            for (const n of ['RegisterForShutdownStart', 'RegisterForShutdownState', 'RegisterForShutdownFailed', 'RegisterForShutdownDone'])
+              ours.push(g(() => SteamClient.User[n](() => emit())));
+            heartbeat = setInterval(() => { takeover(); hookWindows(); emit(); }, 5000);
           }
+          hookWindows();
           ready();
           emit(true);
           return true;
@@ -1031,7 +1505,9 @@ public final class SteamUI: @unchecked Sendable {
           if (probe) { SteamClient.Installs.CancelInstall(); endProbe(null); }   // the probe owns the open wizard
           for (const h of ours) h?.unregister?.();
           const handles = im?.m_clientHandles?.m_rgHandles;
-          if (handles) for (const [name, i] of detached) handles[i] = SteamClient.Installs[name](im[taken[name]]);
+          if (handles) for (const [name, i] of detached) handles[i] = SteamClient[taken[name][0]][name](im[taken[name][1]].bind(im));
+          if (im) delete im.ShowGameLaunchingDialog;
+          releaseWindows();
         },
         snapshot(includeApps) {
           const ds = g(() => downloadsStore);
@@ -1063,6 +1539,11 @@ public final class SteamUI: @unchecked Sendable {
             chats: g(chats) ?? null,
             unreadNotifications: g(() => trayEntries().filter(n => !n.read).reduce((s, n) => s + n.count, 0)) ?? null,
             login: g(loginState) ?? null,
+            dialogs: dialogs.map(dialogJSON),
+            launches: Array.from(launches.values()).map(l => ({ ...l })),
+            shutdown: g(() => { const st = SteamUIStore.m_shutdownState; return st?.eShutdownState ? { state: num(st.eShutdownState), reason: num(st.eShutdownReason),
+              appid: num(st.appid), allowForceQuit: !!st.bAllowForceQuit, failed: !!st.bFailed } : null; }) ?? null,
+            windows: windows.slice(),
           };
         },
         async install(appid) {
@@ -1108,6 +1589,17 @@ public final class SteamUI: @unchecked Sendable {
         move(appid, index) { SteamClient.Downloads.SetQueueIndex(appid, index, CLIENT); return true; },
         enableAll(on) { SteamClient.Downloads.EnableAllDownloads(on, CLIENT); return true; },
         showMain,
+        // Clients call this every few seconds; see attended().
+        ping() { const was = attended(); lastPing = Date.now(); if (!was) hookWindows(); return true; },
+        async answerDialog(id, c) {
+          const d = dialogs.find(x => x.id === String(id));
+          if (!d) return false;
+          dropDialog(d);
+          await d.answer(String(c));
+          return true;
+        },
+        skipShaders(id) { SteamClient.Apps.ContinueGameAction(Number(id), 'SkipShaders'); return true; },
+        cancelLaunch(id) { SteamClient.Apps.CancelGameAction(Number(id)); return true; },
         loginQR() { return startLogin('qr', s => s.Start()); },
         loginPassword(account, password, remember) {
           return startLogin('password', s => s.Start(String(account).trim(), String(password), !!remember));
@@ -1431,7 +1923,7 @@ extension SteamUI.Notification {
 extension SteamUI.Snapshot {
     enum CodingKeys: String, CodingKey {
         case loggedIn, account, downloadsPaused, downloads, overview, history, install, uninstallRequest, running, folders, apps
-        case detached, shelves, chats, unreadNotifications, login
+        case detached, shelves, chats, unreadNotifications, login, dialogs, launches, shutdown, windows
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1441,6 +1933,61 @@ extension SteamUI.Snapshot {
         apps = c.optionalList(.apps); detached = c.list(.detached); shelves = c.optional(.shelves)
         chats = c.optionalList(.chats); unreadNotifications = c.optional(.unreadNotifications)
         login = c.optional(.login)
+        dialogs = c.optionalList(.dialogs); launches = c.optionalList(.launches); shutdown = c.optional(.shutdown)
+        windows = c.optionalList(.windows)
+    }
+}
+
+extension SteamUI.Dialog {
+    enum CodingKeys: String, CodingKey { case id, kind, appid, title, message, note, buttons, eulas, keys, code, details, localTime, remoteTime }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); kind = c.optional(.kind) ?? "generic"; appid = c.value(.appid); title = c.optional(.title)
+        message = c.list(.message); note = c.optional(.note); buttons = c.list(.buttons); eulas = c.optionalList(.eulas)
+        keys = c.optionalList(.keys); code = c.value(.code); details = c.optional(.details)
+        localTime = c.value(.localTime); remoteTime = c.value(.remoteTime)
+    }
+}
+
+extension SteamUI.Dialog.Text {
+    enum CodingKeys: String, CodingKey { case text, key, args }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = c.value(.text); key = c.optional(.key); args = c.list(.args)
+    }
+}
+
+extension SteamUI.Dialog.Choice {
+    enum CodingKeys: String, CodingKey { case id, label, role }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); role = c.optional(.role)
+        label = c.optional(.label) ?? SteamUI.Dialog.Text(text: id, key: nil, args: [])
+    }
+}
+
+extension SteamUI.Launch {
+    enum CodingKeys: String, CodingKey { case gameActionID, appid, task, details, request, done, total, secondsRemaining }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        gameActionID = c.value(.gameActionID); appid = c.value(.appid); task = c.value(.task); details = c.value(.details)
+        request = c.optional(.request); done = c.value(.done); total = c.value(.total); secondsRemaining = c.value(.secondsRemaining)
+    }
+}
+
+extension SteamUI.Shutdown {
+    enum CodingKeys: String, CodingKey { case state, reason, appid, allowForceQuit, failed }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        state = c.value(.state); reason = c.value(.reason); appid = c.value(.appid); allowForceQuit = c.value(.allowForceQuit); failed = c.value(.failed)
+    }
+}
+
+extension SteamUI.HiddenWindow {
+    enum CodingKeys: String, CodingKey { case title, time }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = c.optional(.title); time = c.value(.time)
     }
 }
 
