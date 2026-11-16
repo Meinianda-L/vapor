@@ -4,6 +4,13 @@ import VaporKit
 struct SettingsView: View {
     @AppStorage("boostMode") private var boost = "off"
     @AppStorage("defaultMsync") private var msync = true
+    /// The app's own language override ("" = the system's), stored where AppKit reads it at launch.
+    /// Only the app's own domain: the global one always lists the system languages.
+    @State private var language: String = {
+        let own = UserDefaults.standard.persistentDomain(forName: Bundle.main.bundleIdentifier ?? "")?["AppleLanguages"] as? [String]
+        guard let first = own?.first else { return "" }
+        return first.hasPrefix("zh") ? "zh-Hans" : first.hasPrefix("en") ? "en" : ""
+    }()
     @EnvironmentObject var engine: EngineModel
     @State private var steam: SteamUI.Settings?
     @State private var throttle = ""
@@ -49,8 +56,24 @@ struct SettingsView: View {
             }
             Section("Wine") {
                 Toggle("默认启用 MSync", isOn: $msync)
-                LabeledContent("引擎目录", value: VaporPaths.engines.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                LabeledContent("Wine 环境", value: VaporPaths.prefixes.map { $0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }.joined(separator: "\n"))
+                if let steam = engine.steam {
+                    LabeledContent("当前引擎", value: steam.engine.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                    LabeledContent("Wine 环境", value: steam.prefix.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                }
+            }
+            Section {
+                Picker("界面语言", selection: $language) {
+                    Text("跟随系统").tag("")
+                    // Each language is named in itself, so it can be found whatever the current one is.
+                    Text(verbatim: "简体中文").tag("zh-Hans")
+                    Text(verbatim: "English").tag("en")
+                }
+                .onChange(of: language) { _, new in
+                    if new.isEmpty { UserDefaults.standard.removeObject(forKey: "AppleLanguages") }
+                    else { UserDefaults.standard.set([new], forKey: "AppleLanguages") }
+                }
+            } header: { Text("语言") } footer: {
+                Text("下次打开 Vapor 时生效。Steam 自己的文字（错误信息、商店标签等）也会跟着切换。")
             }
         }
         .formStyle(.grouped)
