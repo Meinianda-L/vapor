@@ -434,8 +434,13 @@ struct RuntimesView: View {
                         Text(reason).font(.system(size: 12)).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
                     }
                     if model.restartPending {
-                        Text("Windows Steam 目前还在用上一个引擎，重新启动 Vapor 后才会换到这个引擎。")
-                            .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                        HStack(spacing: 12) {
+                            Text(engine.engineSwitchBlocker ?? "Windows Steam 目前还在用上一个引擎，切换时会重新启动它。")
+                                .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                            if engine.engineSwitchBlocker == nil {
+                                link("立即切换", enabled: model.job == nil) { engine.switchToConfiguredEngine() }
+                            }
+                        }
                     }
                 }
             } else if let root = model.configuredRoot {
@@ -491,7 +496,7 @@ struct RuntimesView: View {
     }
 
     private func status(_ e: WineEngine) -> String {
-        if model.isCurrent(e) { return model.isInUse(e) || model.inUse == nil ? "默认" : "默认，重启后生效" }
+        if model.isCurrent(e) { return model.isInUse(e) || model.inUse == nil ? "默认" : "默认，尚未切换" }
         return e.usable ? "" : "不可用"
     }
 

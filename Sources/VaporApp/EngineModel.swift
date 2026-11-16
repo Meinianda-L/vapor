@@ -339,6 +339,34 @@ final class EngineModel: ObservableObject {
         stopping = false
     }
 
+    // MARK: engine switch
+
+    /// Why Windows Steam cannot move to another engine right now, or nil when it can. Games share
+    /// Steam's wineserver, and a restart pauses downloads.
+    var engineSwitchBlocker: String? {
+        if !running.isEmpty { return "游戏运行时不能切换引擎。" }
+        if downloading { return "正在下载，下载完成或暂停后再切换。" }
+        if busy || stopping { return "Windows Steam 正忙，稍后再试。" }
+        return nil
+    }
+
+    /// The engine set in 运行时 differs from the one Steam runs on: restart Steam on the new one.
+    func switchToConfiguredEngine() {
+        guard engineSwitchBlocker == nil, let current = steam, let next = WindowsSteam.detectDefault(),
+              next.engine.standardizedFileURL.path != current.engine.standardizedFileURL.path else { return }
+        operations += 1
+        Task {
+            defer { operations -= 1 }
+            let wasUp = await Task.detached { current.isRunning }.value
+            if wasUp { await shutDown() }
+            steam = next
+            if wasUp {
+                do { _ = try await online(next) } catch { show(error) }
+            }
+            refresh()
+        }
+    }
+
     /// Steam is downloading right now (not paused or merely queued).
     var downloading: Bool {
         uiOnline && !downloadsPaused && downloads.contains { $0.active && !$0.paused && !$0.completed }

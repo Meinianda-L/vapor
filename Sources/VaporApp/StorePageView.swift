@@ -199,6 +199,11 @@ struct StorePageView: View {
         }
         .background(Theme.background)
         .task(id: attempt) { await load() }
+        .task(id: engine.uiOnline) {
+            // Steam's own wishlist, so the button says 已在愿望单中 for a game already on it.
+            guard engine.uiOnline, wished == nil, let list = try? await engine.ui.wishlist() else { return }
+            if list.contains(where: { $0.appid == appid }) { wished = true }
+        }
         .sheet(isPresented: $installing) {
             InstallSheet(appid: appid, name: page?.name ?? "App \(appid)") { installing = false }.environmentObject(engine)
         }
