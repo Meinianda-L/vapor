@@ -92,6 +92,8 @@ final class RuntimesModel: ObservableObject {
     private var sizeTask: Task<Void, Never>?
     private var remoteTask: Task<Void, Never>?
 
+    static let shared = RuntimesModel()
+
     init(locations: VaporLocations = .standard) { self.locations = locations }
 
     var configuredRoot: URL? { scan.configured }
@@ -315,11 +317,10 @@ final class RuntimesModel: ObservableObject {
 
 struct RuntimesView: View {
     @EnvironmentObject var engine: EngineModel
-    @StateObject private var model: RuntimesModel
+    /// One model for the app's lifetime, so coming back to the page shows the last scan at once.
+    @ObservedObject private var model = RuntimesModel.shared
     @State private var deleting: WineEngine?
     @State private var showAllRemote = false
-
-    init() { _model = StateObject(wrappedValue: RuntimesModel()) }
 
     var body: some View {
         ScrollView {
@@ -343,7 +344,7 @@ struct RuntimesView: View {
         }
         .task {
             model.inUse = engine.steam?.engine
-            if !model.loaded { await model.load() }
+            await model.load()
             if model.remoteState == .idle { model.loadRemote() }
         }
         .onChange(of: engine.steam?.engine) { _, new in model.inUse = new }
@@ -539,7 +540,7 @@ struct RuntimesView: View {
                     HStack(spacing: 12) {
                         Text(haveLatest ? String(localized: "已是最新 \(latest.release)") : String(localized: "最新 \(latest.release)"))
                             .font(.system(size: 11.5)).foregroundStyle(haveLatest ? Theme.secondary : Theme.text)
-                        if !haveLatest { link(packs.contains { $0.origin == .vapor } ? String(localized: "更新") : String(localized: "下载"), enabled: model.job == nil) { model.download(latest) } }
+                        if !haveLatest { link(packs.contains { $0.origin == .vapor } ? String(localized: "更新") : String(localized: "action.download", defaultValue: "下载"), enabled: model.job == nil) { model.download(latest) } }
                     }
                 }
             }
@@ -654,7 +655,7 @@ struct RuntimesView: View {
                             } else if model.installedRemote.contains(asset.id) {
                                 Text(String(localized: "已安装")).font(.system(size: 12)).foregroundStyle(Theme.secondary)
                             } else {
-                                link(String(localized: "下载"), enabled: model.job == nil) { model.download(asset) }
+                                link(String(localized: "action.download", defaultValue: "下载"), enabled: model.job == nil) { model.download(asset) }
                             }
                         }
                         if model.job == .engine(asset.id) { progress(for: .engine(asset.id)) }

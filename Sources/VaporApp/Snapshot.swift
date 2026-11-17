@@ -69,17 +69,28 @@ enum Snapshot {
         state.destination = .downloads
         capture(state, to: dir.appendingPathComponent("downloads.png"))
         if online { captureEulaStep(state, to: dir.appendingPathComponent("install-eula.png")) } else { skip("install-eula.png", offline) }
-        // The store front loads in its view's task and keeps what it fetched: the first capture
-        // starts the load, the second shows it.
+        // The store front keeps what it fetched in StoreData, so load it first and the capture shows it.
         state.destination = .store
         if online { ensureOnline() }
-        capture(state, to: dir.appendingPathComponent("store.png"))
-        RunLoop.current.run(until: Date().addingTimeInterval(8))
+        var storeLoaded = false
+        Task { await StoreData.shared.loadHome(state.engine); storeLoaded = true }
+        spin(45) { storeLoaded }
         capture(state, to: dir.appendingPathComponent("store.png"))
         state.destination = .community
         capture(state, to: dir.appendingPathComponent("community.png"))
-        RunLoop.current.run(until: Date().addingTimeInterval(8))
+        RunLoop.current.run(until: Date().addingTimeInterval(15))
         capture(state, to: dir.appendingPathComponent("community.png"))
+        // The game page again, now that Steam's UI answers. GamePageModel keeps each app's content, so
+        // loading it once here makes the page's own model start from it.
+        if online, let game = games.first(where: { $0.profile != nil }) {
+            var pageLoaded = false
+            Task { await GamePageModel().load(game.appid, engine: state.engine); pageLoaded = true }
+            spin(40) { pageLoaded }
+            state.destination = .all
+            state.selectedID = game.appid
+            capture(state, to: dir.appendingPathComponent("detail.png"))
+            state.selectedID = nil
+        }
         // Native pages load in the view's task; fetch first so the capture shows the page, not its skeleton.
         for (name, appid) in [("storepage-owned.png", UInt32(730)), ("storepage.png", UInt32(1091500))] {
             var page: StorePage??
@@ -93,6 +104,9 @@ enum Snapshot {
         capture(state, to: dir.appendingPathComponent("onboarding.png"),
                 root: AnyView(OnboardingView(model: OnboardingModel(persist: false)) {}.background(Theme.background)))
         state.destination = .runtimes
+        var scanned = false
+        Task { await RuntimesModel.shared.load(); scanned = true }
+        spin(20) { scanned }
         capture(state, to: dir.appendingPathComponent("runtimes.png"))
         state.destination = .settings
         capture(state, to: dir.appendingPathComponent("settings.png"))

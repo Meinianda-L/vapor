@@ -17,7 +17,7 @@ Vapor 在 Wine 里隐身运行真正的 Windows 版 Steam，再用原生 macOS �
 
 [English](README.md) · **简体中文**
 
-<img src="docs/images/hero.png" alt="Vapor 的游戏库和游戏页面" width="100%">
+<img src="docs/images/zh-CN/hero.png" alt="Vapor 的游戏库和游戏页面" width="100%">
 
 </div>
 
@@ -49,16 +49,16 @@ Vapor 在 Wine 里隐身运行真正的 Windows 版 Steam，再用原生 macOS �
 
 <table>
   <tr>
-    <td><img src="docs/images/store.png" alt="商店"></td>
-    <td><img src="docs/images/game.png" alt="游戏页面"></td>
+    <td><img src="docs/images/zh-CN/store.png" alt="商店"></td>
+    <td><img src="docs/images/zh-CN/game.png" alt="游戏页面"></td>
   </tr>
   <tr>
-    <td><img src="docs/images/community.png" alt="社区"></td>
-    <td><img src="docs/images/downloads.png" alt="下载"></td>
+    <td><img src="docs/images/zh-CN/community.png" alt="社区"></td>
+    <td><img src="docs/images/zh-CN/downloads.png" alt="下载"></td>
   </tr>
   <tr>
-    <td><img src="docs/images/onboarding.png" alt="首次运行"></td>
-    <td><img src="docs/images/runtimes.png" alt="运行时"></td>
+    <td><img src="docs/images/zh-CN/onboarding.png" alt="首次运行"></td>
+    <td><img src="docs/images/zh-CN/runtimes.png" alt="运行时"></td>
   </tr>
 </table>
 

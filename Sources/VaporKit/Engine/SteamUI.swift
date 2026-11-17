@@ -224,7 +224,7 @@ public final class SteamUI: @unchecked Sendable {
             public let done: Int64
             public let total: Int64
         }
-        public static let stageNames = ["校验已安装文件", String(localized: "分配磁盘"), String(localized: "下载"), String(localized: "整理文件"), String(localized: "校验暂存文件"), String(localized: "复制"), String(localized: "写入")]
+        public static let stageNames = [String(localized: "校验已安装文件"), String(localized: "分配磁盘"), String(localized: "stage.download", defaultValue: "下载"), String(localized: "整理文件"), String(localized: "校验暂存文件"), String(localized: "复制"), String(localized: "写入")]
     }
 
     public struct Sample: Decodable, Sendable, Equatable {
