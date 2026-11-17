@@ -1,4 +1,5 @@
 import SwiftUI
+import VaporKit
 import AppKit
 
 // MARK: - Data
@@ -16,7 +17,7 @@ struct NewsItem: Identifiable, Sendable {
     let cover: URL?
 
     var meta: String {
-        let day = date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(Locale(identifier: "zh_CN")))
+        let day = date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(AppLanguage.locale))
         return feedLabel.isEmpty ? day : "\(day) · \(feedLabel)"
     }
 }

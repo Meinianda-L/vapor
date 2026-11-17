@@ -148,7 +148,7 @@ struct DownloadsView: View {
     static func time(_ t: Int) -> String {
         guard t > 0 else { return "—" }
         let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
+        f.locale = AppLanguage.locale
         f.dateFormat = Calendar.current.isDateInToday(Date(timeIntervalSince1970: TimeInterval(t))) ? "HH:mm" : String(localized: "M月d日 HH:mm")
         return f.string(from: Date(timeIntervalSince1970: TimeInterval(t)))
     }

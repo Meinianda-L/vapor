@@ -93,7 +93,7 @@ struct ProfileEditSheet: View {
         }
         guard !Task.isCancelled else { return }
         edit = data
-        let zh = Locale(identifier: "zh_CN")
+        let zh = AppLanguage.locale
         countries = ((try? await ProfileEditClient.locations()) ?? [])
             .map { LocationOption(code: $0.code, name: zh.localizedString(forRegionCode: $0.code) ?? $0.name, hasChildren: $0.hasChildren) }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }

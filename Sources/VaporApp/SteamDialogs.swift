@@ -163,7 +163,7 @@ struct SteamDialogSheet: View {
             Text(label).font(.system(size: 12, weight: .medium))
             Spacer()
             Text(time > 0 ? Date(timeIntervalSince1970: TimeInterval(time))
-                .formatted(.dateTime.year().month().day().hour().minute().locale(Locale(identifier: "zh_CN"))) : "—")
+                .formatted(.dateTime.year().month().day().hour().minute().locale(AppLanguage.locale)) : "—")
                 .font(.system(size: 12).monospacedDigit())
                 .foregroundStyle(Theme.secondary)
         }

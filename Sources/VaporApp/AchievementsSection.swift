@@ -81,7 +81,7 @@ private struct AchievementRow: View {
     private var unlockLine: String? {
         guard achievement.achieved, achievement.unlockTime > 0 else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(achievement.unlockTime))
-            .formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))
+            .formatted(.dateTime.year().month().day().locale(AppLanguage.locale))
         return engine.strings("AppDetails_Achievements_Unlocked", date) ?? String(localized: "解锁于 \(date)")
     }
 

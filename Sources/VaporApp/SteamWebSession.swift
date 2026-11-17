@@ -68,7 +68,7 @@ final class SteamWebSession: ObservableObject {
             if let cookie = HTTPCookie(properties: props) { await store.setCookie(cookie) }
         }
         for host in ["store.steampowered.com", "steamcommunity.com", "checkout.steampowered.com", "help.steampowered.com"] {
-            if let lang = HTTPCookie(properties: [.name: "Steam_Language", .value: "schinese", .domain: host, .path: "/", .secure: "TRUE"]) {
+            if let lang = HTTPCookie(properties: [.name: "Steam_Language", .value: AppLanguage.steam, .domain: host, .path: "/", .secure: "TRUE"]) {
                 await store.setCookie(lang)
             }
         }

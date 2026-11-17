@@ -8,7 +8,7 @@ import Foundation
 /// Steam updates. A namespace the module does not export (AccountCart) is reached by evaluating that
 /// module's factory once more with the namespace exposed: it only defines classes and functions.
 extension SteamUI {
-    public static let storeLanguage = "schinese"
+    public static var storeLanguage: String { AppLanguage.steam }
 
     // MARK: - Items
 

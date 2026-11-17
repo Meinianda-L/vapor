@@ -224,7 +224,7 @@ extension SteamUI.Friend {
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "zh_CN")
+        f.locale = AppLanguage.locale
         f.unitsStyle = .full
         return f
     }()

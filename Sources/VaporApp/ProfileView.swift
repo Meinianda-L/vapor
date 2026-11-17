@@ -124,7 +124,7 @@ struct ProfileView: View {
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "zh_CN")
+        f.locale = AppLanguage.locale
         f.unitsStyle = .short
         return f
     }()
@@ -302,10 +302,10 @@ struct ProfileData: Sendable {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "MMMM d, yyyy"
-        if let d = f.date(from: s) { return d.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN"))) }
+        if let d = f.date(from: s) { return d.formatted(.dateTime.year().month().day().locale(AppLanguage.locale)) }
         f.dateFormat = "MMMM d yyyy"
         if let d = f.date(from: "\(s) \(Calendar.current.component(.year, from: Date()))") {
-            return d.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))
+            return d.formatted(.dateTime.year().month().day().locale(AppLanguage.locale))
         }
         return nil
     }

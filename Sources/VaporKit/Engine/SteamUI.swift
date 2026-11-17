@@ -736,6 +736,7 @@ public final class SteamUI: @unchecked Sendable {
     /// Replaces the agent only when it is another version and idle: every client shares one agent, and an
     /// install or probe in flight must keep the agent that is driving it.
     static let injection = """
+    window.__vaporLang = '\(AppLanguage.steam)';
     if (window.__vapor?.version !== \(agentVersion) && !window.__vapor?.busy?.()) {
     \(agentSource)
     window.__vapor.subscribe();
@@ -830,7 +831,7 @@ public final class SteamUI: @unchecked Sendable {
       const eulaContent = async e => {
         try {
           const u = new URL(e.url.replace('http://', 'https://'));
-          u.searchParams.append('eulaLang', 'schinese');   // Steam falls back to English when there is no translation
+          u.searchParams.append('eulaLang', window.__vaporLang || 'schinese');   // Steam falls back to English without a translation
           u.searchParams.append('json', '1');
           const d = await (await fetch(u, { credentials: 'include' })).json();
           return { title: d.title ?? null, content: d.content ?? null };

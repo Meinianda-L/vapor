@@ -14,7 +14,7 @@ enum GamePage {
         case ..<1: return String(localized: "今天")
         case 1: return String(localized: "昨天")
         case 2...6: return String(localized: "\(days) 天前")
-        default: return date.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))
+        default: return date.formatted(.dateTime.year().month().day().locale(AppLanguage.locale))
         }
     }
 
@@ -44,7 +44,7 @@ enum GamePage {
     }
 
     static func date(_ date: Date) -> String {
-        date.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))
+        date.formatted(.dateTime.year().month().day().locale(AppLanguage.locale))
     }
 }
 

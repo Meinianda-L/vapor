@@ -184,13 +184,13 @@ struct ChatView: View {
 
         private static let clock: DateFormatter = {
             let f = DateFormatter()
-            f.locale = Locale(identifier: "zh_CN")
+            f.locale = AppLanguage.locale
             f.dateFormat = "HH:mm"
             return f
         }()
         private static let dated: DateFormatter = {
             let f = DateFormatter()
-            f.locale = Locale(identifier: "zh_CN")
+            f.locale = AppLanguage.locale
             f.dateFormat = String(localized: "M月d日 HH:mm")
             return f
         }()

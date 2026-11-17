@@ -335,7 +335,7 @@ struct AccountView: View {
                         group(String(localized: "Steam 钱包")) {
                             fact(String(localized: "余额"), w.hasWallet ? w.balance : String(localized: "没有钱包"))
                             if w.pendingCents != 0 { fact(String(localized: "待处理"), w.pending) }
-                            fact(String(localized: "国家/地区"), Locale(identifier: "zh_CN").localizedString(forRegionCode: w.country) ?? w.country)
+                            fact(String(localized: "国家/地区"), AppLanguage.locale.localizedString(forRegionCode: w.country) ?? w.country)
                             if let t = w.lastTransaction { fact(String(localized: "最近一笔交易"), day(t)) }
                         }
                     } else if failed {

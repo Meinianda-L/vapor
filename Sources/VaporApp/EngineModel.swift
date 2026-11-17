@@ -77,7 +77,7 @@ final class EngineModel: ObservableObject {
 
     init() {
         steam = WindowsSteam.detectDefault()
-        strings = steam.map { SteamStrings(steamRoot: $0.steamRoot) } ?? SteamStrings(table: [:])
+        strings = steam.map { SteamStrings(steamRoot: $0.steamRoot, language: AppLanguage.steam) } ?? SteamStrings(table: [:])
         // Steam pushes download, wizard and library changes as they happen (see SteamUI.subscribe).
         ui.subscribe { [weak self] snapshot in
             Task { @MainActor in self?.apply(snapshot) }
@@ -101,7 +101,7 @@ final class EngineModel: ObservableObject {
     /// First-run setup has just installed and started Windows Steam: pick it up and connect.
     func adoptSetup() {
         guard steam == nil, let found = WindowsSteam.detectDefault() else { return }
-        strings = SteamStrings(steamRoot: found.steamRoot)
+        strings = SteamStrings(steamRoot: found.steamRoot, language: AppLanguage.steam)
         steam = found
         loadAppInfo()
         refresh()

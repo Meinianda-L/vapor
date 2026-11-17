@@ -8,7 +8,7 @@ import VaporKit
 enum CommunityTime {
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "zh_CN")
+        f.locale = AppLanguage.locale
         f.unitsStyle = .full
         return f
     }()
@@ -17,7 +17,7 @@ enum CommunityTime {
         guard let date else { return "" }
         let age = Date().timeIntervalSince(date)
         if age < 30 * 86_400, age > -3600 { return relative.localizedString(for: date, relativeTo: Date()) }
-        return date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(Locale(identifier: "zh_CN")))
+        return date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(AppLanguage.locale))
     }
 }
 

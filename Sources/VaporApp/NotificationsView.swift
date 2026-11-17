@@ -148,7 +148,7 @@ private struct NotificationRow: View {
 
     private static let formatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "zh_CN")
+        f.locale = AppLanguage.locale
         f.unitsStyle = .short
         return f
     }()

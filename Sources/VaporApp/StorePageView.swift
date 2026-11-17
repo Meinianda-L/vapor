@@ -116,7 +116,7 @@ final class StorePageCache {
 
     func page(_ appid: UInt32) async -> StorePage? {
         if let p = pages[appid] { return p }
-        guard let d = await Self.get("https://store.steampowered.com/api/appdetails?appids=\(appid)&l=schinese&cc=cn"),
+        guard let d = await Self.get("https://store.steampowered.com/api/appdetails?appids=\(appid)&l=\(AppLanguage.steam)&cc=cn"),
               let page = StorePage.parse(details: d, appid: appid) else { return nil }
         pages[appid] = page
         return page
@@ -136,7 +136,7 @@ final class StorePageCache {
         let fetched = await withTaskGroup(of: StorePage.DLC?.self) { group in
             for id in missing {
                 group.addTask {
-                    guard let data = await Self.get("https://store.steampowered.com/api/appdetails?appids=\(id)&l=schinese&cc=cn&filters=basic,price_overview")
+                    guard let data = await Self.get("https://store.steampowered.com/api/appdetails?appids=\(id)&l=\(AppLanguage.steam)&cc=cn&filters=basic,price_overview")
                     else { return nil }
                     return StorePage.parse(dlc: data, id: id)
                 }
