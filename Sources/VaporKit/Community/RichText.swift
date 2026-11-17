@@ -8,13 +8,22 @@ public struct RichSpan: Equatable, Sendable {
     public var strike = false
     public var code = false
     public var link: URL?
+    /// Hidden until the reader reveals it.
+    public var spoiler = false
+    /// A Steam emoticon drawn as its image; `text` is its ":name:" fallback.
+    public var emoticon: String?
 
-    public init(_ text: String, bold: Bool = false, italic: Bool = false, underline: Bool = false, strike: Bool = false, code: Bool = false, link: URL? = nil) {
+    public init(_ text: String, bold: Bool = false, italic: Bool = false, underline: Bool = false, strike: Bool = false, code: Bool = false,
+                link: URL? = nil, spoiler: Bool = false, emoticon: String? = nil) {
         self.text = text; self.bold = bold; self.italic = italic; self.underline = underline; self.strike = strike; self.code = code; self.link = link
+        self.spoiler = spoiler; self.emoticon = emoticon
     }
 
-    fileprivate func sameStyle(as o: RichSpan) -> Bool {
-        bold == o.bold && italic == o.italic && underline == o.underline && strike == o.strike && code == o.code && link == o.link
+    public static func emoticon(_ name: String) -> RichSpan { RichSpan(":\(name):", emoticon: name) }
+
+    func sameStyle(as o: RichSpan) -> Bool {
+        emoticon == nil && o.emoticon == nil && bold == o.bold && italic == o.italic && underline == o.underline && strike == o.strike
+            && code == o.code && link == o.link && spoiler == o.spoiler
     }
 }
 
@@ -27,6 +36,8 @@ public indirect enum RichBlock: Equatable, Sendable {
     case code(String)
     case video(URL)
     case rule
+    /// A Steam chat sticker, by its type name.
+    case sticker(String)
 
     /// Plain text of the block, for excerpts and tests.
     public var plain: String {
@@ -68,7 +79,7 @@ public enum RichText {
     }
 
     fileprivate struct Style {
-        var bold = false, italic = false, underline = false, strike = false, code = false
+        var bold = false, italic = false, underline = false, strike = false, code = false, spoiler = false
         var link: URL?
     }
 
@@ -88,7 +99,8 @@ public enum RichText {
                 else if s.hasPrefix(" "), runs.isEmpty { s.removeFirst() }
             }
             guard !s.isEmpty else { return }
-            var span = RichSpan(s, bold: style.bold, italic: style.italic, underline: style.underline, strike: style.strike, code: style.code, link: style.link)
+            var span = RichSpan(s, bold: style.bold, italic: style.italic, underline: style.underline, strike: style.strike, code: style.code,
+                                link: style.link, spoiler: style.spoiler)
             if let i = runs.indices.last, runs[i].sameStyle(as: span) { runs[i].text += span.text } else { span.text = s; runs.append(span) }
         }
 
@@ -124,6 +136,7 @@ public enum RichText {
             case "span":
                 if n.hasClass("bb_strike") { st.strike = true }
                 if n.hasClass("bb_underline") { st.underline = true }
+                if n.hasClass("bb_spoiler") { st.spoiler = true }
             case "a":
                 if let href = n.attr("href"), let url = RichText.resolve(href, base: base) { st.link = url }
             case "img":
@@ -178,8 +191,9 @@ public enum RichText {
         mutating func image(_ n: HTMLNode) {
             guard let src = n.attr("src") else { return }
             if src.contains("/economy/emoticon/") {
-                let name = n.attr("alt") ?? n.attr("title") ?? String(src.split(separator: "/").last ?? "")
-                add(name.hasPrefix(":") ? name : ":\(name):", Style())
+                let name = (n.attr("alt") ?? n.attr("title") ?? String(src.split(separator: "/").last ?? ""))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+                if !name.isEmpty { runs.append(.emoticon(name)) }
                 return
             }
             guard let url = RichText.resolve(src, base: base) else { return }

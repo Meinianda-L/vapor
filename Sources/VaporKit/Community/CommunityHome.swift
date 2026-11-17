@@ -61,7 +61,7 @@ public enum CommunityHomeClient {
 
 public enum CommunityHomeParser {
     private static let kinds: [(String, HomeCard.Kind)] = [
-        (String(localized: "截图"), .screenshot), (String(localized: "艺术作品"), .artwork), (String(localized: "创意工坊项目"), .workshop), (String(localized: "指南"), .guide), (String(localized: "视频"), .video), (String(localized: "实况直播"), .broadcast),
+        ("截图", .screenshot), ("艺术作品", .artwork), ("创意工坊项目", .workshop), ("指南", .guide), ("视频", .video), ("实况直播", .broadcast),
     ]
 
     /// Cards of /apps/allcontenthome. The type line reads "<game>: <kind>", so the kind is its suffix.
