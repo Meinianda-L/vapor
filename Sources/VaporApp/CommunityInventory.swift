@@ -85,7 +85,7 @@ private struct InventoryItems: View {
                     }
                 }
                 if next != nil {
-                    Button(more ? "正在加载…" : String(localized: "加载更多")) { Task { await load(reset: false) } }
+                    Button(more ? String(localized: "正在加载…") : String(localized: "加载更多")) { Task { await load(reset: false) } }
                         .buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Theme.text).disabled(more)
                 }
             }

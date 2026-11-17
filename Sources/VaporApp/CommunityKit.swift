@@ -195,7 +195,7 @@ struct CommunityPager: View {
         let last = pageCount.map { page >= $0 } ?? !hasNext
         HStack(spacing: 20) {
             Button("‹ 上一页") { go(page - 1) }.disabled(page <= 1)
-            Text(pageCount.map { "第 \(page) 页，共 \($0) 页" } ?? String(localized: "第 \(page) 页"))
+            Text(pageCount.map { String(localized: "第 \(page) 页，共 \($0) 页") } ?? String(localized: "第 \(page) 页"))
                 .foregroundStyle(Theme.secondary).monospacedDigit()
             Button("下一页 ›") { go(page + 1) }.disabled(last)
         }
@@ -355,7 +355,7 @@ struct RichBlocksView: View {
                 .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         case .video(let url):
             HStack {
-                Text(url.host?.contains("youtube") == true ? "YouTube 视频" : String(localized: "视频")).font(.system(size: 13)).foregroundStyle(Theme.text)
+                Text(url.host?.contains("youtube") == true ? String(localized: "YouTube 视频") : String(localized: "视频")).font(.system(size: 13)).foregroundStyle(Theme.text)
                 Spacer()
                 Button("在浏览器中观看") { openURL(url) }.buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Theme.accent)
             }

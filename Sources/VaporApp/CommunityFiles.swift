@@ -187,7 +187,7 @@ struct SharedFileDetailView: View {
 
     private func subscribeButton(_ appid: UInt32) -> some View {
         let on = subscribed == true
-        return Button(working ? "请稍候…" : on ? String(localized: "已订阅") : "订阅") {
+        return Button(working ? String(localized: "请稍候…") : on ? String(localized: "已订阅") : String(localized: "订阅")) {
             if let subscribe { subscribe(id) } else if on { confirmUnsubscribe = true } else { Task { await setSubscribed(true, appid) } }
         }
         .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundStyle(on ? Theme.secondary : Theme.text)

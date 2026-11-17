@@ -175,7 +175,7 @@ struct FriendsView: View {
         let folded = items.count > Self.offlineLimit && !showOffline && query.isEmpty
         if folded {
             HStack {
-                SectionLabel(text: "\(t("Menu_Status_Offline", "离线"))（\(items.count)）")
+                SectionLabel(text: String(localized: "\(t("Menu_Status_Offline", "离线"))（\(items.count)）"))
                 Spacer()
                 toggle(String(localized: "显示"))
             }

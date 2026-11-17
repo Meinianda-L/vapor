@@ -28,7 +28,7 @@ struct ProfileEditSheet: View {
             HStack(spacing: 18) {
                 Spacer()
                 Button("取消", action: dismiss).buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.secondary)
-                Button(saving ? "正在保存…" : String(localized: "保存")) { Task { await save() } }
+                Button(saving ? String(localized: "正在保存…") : String(localized: "保存")) { Task { await save() } }
                     .buttonStyle(.plain).font(.system(size: 13, weight: .medium))
                     .foregroundStyle(edit == nil || saving ? Theme.tertiary : Theme.accent).disabled(edit == nil || saving)
             }

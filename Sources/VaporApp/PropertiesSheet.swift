@@ -189,7 +189,7 @@ struct PropertiesSheet: View {
 
     @ViewBuilder private func files(_ d: SteamUI.AppDetails) -> some View {
         group(t("AppProperties_LocalFilesSize", String(localized: "安装大小：")), nil) {
-            Text(d.installed ? "\(bytes(d.diskUsage))\(d.dlcUsage > 0 ? "（含 DLC \(bytes(d.dlcUsage))）" : "")" : String(localized: "未安装"))
+            Text(d.installed ? String(localized: "\(bytes(d.diskUsage))\(d.dlcUsage > 0 ? "（含 DLC \(bytes(d.dlcUsage))）" : "")") : String(localized: "未安装"))
                 .font(.system(size: 13, weight: .medium))
             if !d.installFolder.isEmpty {
                 HStack {

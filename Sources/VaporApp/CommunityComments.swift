@@ -36,7 +36,7 @@ struct CommentsSection: View {
                 .padding(10)
                 .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             HStack(spacing: 14) {
-                Button(posting ? "正在发表…" : String(localized: "发表")) { Task { await submit() } }
+                Button(posting ? String(localized: "正在发表…") : String(localized: "发表")) { Task { await submit() } }
                     .buttonStyle(.plain).font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(canPost ? Theme.accent : Theme.tertiary).disabled(!canPost)
                 if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(Theme.warn) }

@@ -61,51 +61,51 @@ struct GameMenu: View {
             switch primary {
             case .play:
                 if engine.running.contains(id) {
-                    Button(t("GameAction_Stop", "停止")) { engine.stopGame(id) }
+                    Button(t("GameAction_Stop", String(localized: "停止"))) { engine.stopGame(id) }
                 } else {
-                    Button(t("GameAction_Play", "开始游戏")) { engine.play(game) }
+                    Button(t("GameAction_Play", String(localized: "开始游戏"))) { engine.play(game) }
                         .disabled(game.verdict == .blocked || engine.busy)
                 }
             case .install:
-                Button(t("GameAction_Install", "安装") + "…") { sheet = .install }.disabled(engine.steam == nil || engine.busy)
-            case .pause: Button(t("GameAction_Pause", "暂停")) { engine.pause(id) }.disabled(!engine.uiOnline)
-            case .resume: Button(t("GameAction_Resume", "继续")) { engine.resume(id) }.disabled(!engine.uiOnline)
+                Button(t("GameAction_Install", String(localized: "安装")) + "…") { sheet = .install }.disabled(engine.steam == nil || engine.busy)
+            case .pause: Button(t("GameAction_Pause", String(localized: "暂停"))) { engine.pause(id) }.disabled(!engine.uiOnline)
+            case .resume: Button(t("GameAction_Resume", String(localized: "继续"))) { engine.resume(id) }.disabled(!engine.uiOnline)
             }
             Divider()
         }
         if engine.isFavorite(id) {
-            Button(t("GameAction_RemoveFromFavorites", "从收藏夹中移除")) { engine.setFavorite(id, false) }.disabled(!canOrganize)
+            Button(t("GameAction_RemoveFromFavorites", String(localized: "从收藏夹中移除"))) { engine.setFavorite(id, false) }.disabled(!canOrganize)
         } else {
-            Button(t("GameAction_AddToFavorites", "添加至收藏夹")) { engine.setFavorite(id, true) }.disabled(!canOrganize)
+            Button(t("GameAction_AddToFavorites", String(localized: "添加至收藏夹"))) { engine.setFavorite(id, true) }.disabled(!canOrganize)
         }
-        Menu(t("GameAction_AddToCollection", "添加至")) {
+        Menu(t("GameAction_AddToCollection", String(localized: "添加至"))) {
             ForEach(engine.shelves?.collections.filter { !$0.dynamic } ?? []) { c in
                 Toggle(c.name, isOn: Binding(get: { c.apps.contains(id) }, set: { engine.setInCollection(c.id, id, $0) }))
             }
             if engine.shelves?.collections.contains(where: { !$0.dynamic }) == true { Divider() }
-            Button(t("GameAction_NewCollectionDialogTitle", "新收藏") + "…") { sheet = .newCollection }
+            Button(t("GameAction_NewCollectionDialogTitle", String(localized: "新收藏")) + "…") { sheet = .newCollection }
         }
         .disabled(!canOrganize)
-        Menu(t("GameAction_Manage", "管理")) {
+        Menu(t("GameAction_Manage", String(localized: "管理"))) {
             if game.installed, let dir = game.installDir {
-                Button(t("GameAction_BrowseLocalFiles", "浏览本地文件")) { NSWorkspace.shared.activateFileViewerSelecting([dir]) }
+                Button(t("GameAction_BrowseLocalFiles", String(localized: "浏览本地文件"))) { NSWorkspace.shared.activateFileViewerSelecting([dir]) }
             }
             if viaWindowsSteam {
-                Button(t("AppProperties_LocalFilesVerify_game", "验证游戏文件的完整性")) { engine.verify(id) }.disabled(!engine.uiOnline)
+                Button(t("AppProperties_LocalFilesVerify_game", String(localized: "验证游戏文件的完整性"))) { engine.verify(id) }.disabled(!engine.uiOnline)
             }
             if engine.isHidden(id) {
-                Button(t("GameAction_RemoveFromHidden", "从隐藏中删除")) { engine.setHidden(id, false) }.disabled(!canOrganize)
+                Button(t("GameAction_RemoveFromHidden", String(localized: "从隐藏中删除"))) { engine.setHidden(id, false) }.disabled(!canOrganize)
             } else {
-                Button(t("GameAction_AddToHidden", "隐藏此游戏")) { engine.setHidden(id, true) }.disabled(!canOrganize)
+                Button(t("GameAction_AddToHidden", String(localized: "隐藏此游戏"))) { engine.setHidden(id, true) }.disabled(!canOrganize)
             }
             if viaWindowsSteam {
                 Divider()
-                Button(t("GameAction_Uninstall", "卸载") + "…") { sheet = .uninstall }
+                Button(t("GameAction_Uninstall", String(localized: "卸载")) + "…") { sheet = .uninstall }
             }
         }
         if known {
             Divider()
-            Button(t("GameAction_GameProperties", "属性…")) { app.properties = id }
+            Button(t("GameAction_GameProperties", String(localized: "属性…"))) { app.properties = id }
         }
     }
 }

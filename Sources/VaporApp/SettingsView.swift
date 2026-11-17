@@ -42,7 +42,7 @@ struct SettingsView: View {
                 }
             } else {
                 Section("Steam") {
-                    Text(engine.uiOnline ? "正在读取 Steam 设置…" : String(localized: "Windows Steam 在线后可在这里修改它的设置。")).foregroundStyle(.secondary)
+                    Text(engine.uiOnline ? String(localized: "正在读取 Steam 设置…") : String(localized: "Windows Steam 在线后可在这里修改它的设置。")).foregroundStyle(.secondary)
                 }
             }
             Section {

@@ -19,7 +19,7 @@ struct AchievementsSection: View {
             if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline) {
-                        SectionLabel(text: engine.strings("AppDetails_SectionTitle_Achievements") ?? "成就")
+                        SectionLabel(text: engine.strings("AppDetails_SectionTitle_Achievements") ?? String(localized: "成就"))
                         Spacer(minLength: 12)
                         Text("已解锁 \(unlocked) / \(items.count)")
                             .font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondary)
@@ -32,14 +32,14 @@ struct AchievementsSection: View {
                         }
                     }
                     if items.count > Self.collapsedCount {
-                        Button(expanded ? "收起" : "显示全部 (\(items.count))") { expanded.toggle() }
+                        Button(expanded ? "收起" : String(localized: "显示全部 (\(items.count))")) { expanded.toggle() }
                             .buttonStyle(.plain)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.secondary)
                     }
                 }
             } else if failed {
-                Text(engine.strings("Achievements_FailedToLoad_Title") ?? "载入成就数据失败")
+                Text(engine.strings("Achievements_FailedToLoad_Title") ?? String(localized: "载入成就数据失败"))
                     .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
             }
         }
@@ -82,14 +82,14 @@ private struct AchievementRow: View {
         guard achievement.achieved, achievement.unlockTime > 0 else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(achievement.unlockTime))
             .formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))
-        return engine.strings("AppDetails_Achievements_Unlocked", date) ?? "解锁于 \(date)"
+        return engine.strings("AppDetails_Achievements_Unlocked", date) ?? String(localized: "解锁于 \(date)")
     }
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             AchievementIcon(url: concealed ? nil : achievement.icon, locked: !achievement.achieved)
             VStack(alignment: .leading, spacing: 3) {
-                Text(concealed ? "隐藏成就" : achievement.name)
+                Text(concealed ? String(localized: "隐藏成就") : achievement.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(achievement.achieved ? Theme.text : Theme.secondary)
                     .lineLimit(1)
@@ -108,15 +108,16 @@ private struct AchievementRow: View {
     }
 }
 
-private struct AchievementIcon: View {
+struct AchievementIcon: View {
     let url: URL?
     let locked: Bool
+    var size: CGFloat = 48
     @State private var image: NSImage?
 
     var body: some View {
         RoundedRectangle(cornerRadius: 4, style: .continuous)
             .fill(Theme.surface)
-            .frame(width: 48, height: 48)
+            .frame(width: size, height: size)
             .overlay {
                 if let image {
                     Image(nsImage: image).resizable().scaledToFill()

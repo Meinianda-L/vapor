@@ -19,7 +19,7 @@ struct PointsShopView: View {
 
     var body: some View {
         CommunityFrame(title: String(localized: "点数商店"), open: open, onBack: onClose) {
-            Text(points.map { "你的点数：\($0.formatted())" } ?? String(localized: "正在读取点数余额…"))
+            Text(points.map { String(localized: "你的点数：\($0.formatted())") } ?? String(localized: "正在读取点数余额…"))
                 .font(.system(size: 12.5)).foregroundStyle(Theme.secondary).monospacedDigit()
             if failed {
                 HStack(spacing: 10) {
@@ -45,7 +45,7 @@ struct PointsShopView: View {
                 }
             }
             if cursor != nil {
-                Button(more ? "正在加载…" : String(localized: "加载更多")) { Task { await load(reset: false) } }
+                Button(more ? String(localized: "正在加载…") : String(localized: "加载更多")) { Task { await load(reset: false) } }
                     .buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Theme.text).disabled(more)
             }
         }
@@ -109,9 +109,9 @@ private struct RedeemSheet: View {
             if done { Text("已兑换。").font(.system(size: 12.5)).foregroundStyle(Theme.ok) }
             HStack(spacing: 18) {
                 Spacer()
-                Button(done ? "完成" : String(localized: "取消"), action: dismiss).buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                Button(done ? String(localized: "完成") : String(localized: "取消"), action: dismiss).buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 if !done {
-                    Button(working ? "正在兑换…" : String(localized: "确认兑换")) { Task { await redeem() } }
+                    Button(working ? String(localized: "正在兑换…") : String(localized: "确认兑换")) { Task { await redeem() } }
                         .buttonStyle(.plain).font(.system(size: 13, weight: .medium))
                         .foregroundStyle(affordable && !working ? Theme.accent : Theme.tertiary).disabled(!affordable || working)
                 }

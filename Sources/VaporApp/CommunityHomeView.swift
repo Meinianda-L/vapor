@@ -104,7 +104,7 @@ struct CommunityMoreButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Text(busy ? "载入中…" : String(localized: "查看更多")).font(.system(size: 12.5)).foregroundStyle(Theme.text)
+            Text(busy ? String(localized: "载入中…") : String(localized: "查看更多")).font(.system(size: 12.5)).foregroundStyle(Theme.text)
         }
         .buttonStyle(.plain).disabled(busy).padding(.vertical, 8)
     }

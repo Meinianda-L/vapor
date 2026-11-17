@@ -60,7 +60,7 @@ enum NewsFeed {
             let contents = raw.contents ?? ""
             let looksHTML = !announcement && contents.range(of: "<(p|br|div|h[1-6]|li|img|a)[ >/]", options: [.regularExpression, .caseInsensitive]) != nil
             let markup = looksHTML ? EulaText.bbcode(fromHTML: NewsMarkup.imagesToBBCode(contents)) : contents
-            let label = announcement ? "官方公告" : (raw.feedlabel ?? "")
+            let label = announcement ? String(localized: "官方公告") : (raw.feedlabel ?? "")
             return NewsItem(
                 id: raw.gid ?? raw.url ?? "\(index)", title: raw.title ?? "", url: raw.url.flatMap(URL.init(string:)),
                 author: raw.author ?? "", feedLabel: label, date: Date(timeIntervalSince1970: TimeInterval(raw.date ?? 0)),
@@ -320,7 +320,7 @@ struct NewsSection: View {
         VStack(alignment: .leading, spacing: 0) {
             if !items.isEmpty {
                 HStack {
-                    SectionLabel(text: "新闻")
+                    SectionLabel(text: String(localized: "新闻"))
                     Spacer()
                     Button("全部新闻", action: openAll)
                         .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.secondary)
@@ -404,7 +404,7 @@ struct NewsView: View {
     @ViewBuilder private var content: some View {
         switch phase {
         case .loading:
-            note("正在加载…")
+            note(String(localized: "正在加载…"))
         case .failed:
             VStack(alignment: .leading, spacing: 10) {
                 Text("暂时无法加载新闻。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
@@ -412,7 +412,7 @@ struct NewsView: View {
             }
             .padding(40)
         case .loaded(let items) where items.isEmpty:
-            note("这款游戏暂无新闻。")
+            note(String(localized: "这款游戏暂无新闻。"))
         case .loaded(let items):
             HStack(spacing: 0) {
                 ScrollView {
@@ -510,7 +510,7 @@ private struct ArticleReader: View {
             NewsImage(url: url)
         case .video(let url):
             HStack {
-                Text(url.host?.contains("youtube") == true ? "YouTube 视频" : "视频").font(.system(size: 13)).foregroundStyle(Theme.text)
+                Text(url.host?.contains("youtube") == true ? "YouTube 视频" : String(localized: "视频")).font(.system(size: 13)).foregroundStyle(Theme.text)
                 Spacer()
                 Button("在浏览器中观看") { open(url) }.buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Theme.accent)
             }
