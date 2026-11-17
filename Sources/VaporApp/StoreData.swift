@@ -202,9 +202,9 @@ struct StorePriceLabel: View {
     }
 
     static func text(_ item: SteamUI.StoreItem) -> String {
-        if let p = item.price { return p.finalCents == 0 && item.isFree ? "免费开玩" : p.final }
-        if item.isFree { return "免费开玩" }
-        return item.comingSoon ? (item.releaseText.isEmpty ? "即将推出" : item.releaseText) : ""
+        if let p = item.price { return p.finalCents == 0 && item.isFree ? String(localized: "免费开玩") : p.final }
+        if item.isFree { return String(localized: "免费开玩") }
+        return item.comingSoon ? (item.releaseText.isEmpty ? String(localized: "即将推出") : item.releaseText) : ""
     }
 }
 

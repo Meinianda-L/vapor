@@ -16,7 +16,7 @@ struct InstallFlowSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("安装 \(name)").font(.system(size: 16, weight: .semibold))
+                Text(String(localized: "安装 \(name)")).font(.system(size: 16, weight: .semibold))
                 Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.secondary)
             }
             switch run.step {
@@ -32,9 +32,9 @@ struct InstallFlowSheet: View {
 
     private var subtitle: String {
         switch run.step {
-        case "eula": return "继续安装前，需要同意以下协议。"
-        case "cdkey": return "这款游戏附带 CD Key，激活时可能会用到。"
-        default: return "需要额外步骤。"
+        case "eula": return String(localized: "继续安装前，需要同意以下协议。")
+        case "cdkey": return String(localized: "这款游戏附带 CD Key，激活时可能会用到。")
+        default: return String(localized: "需要额外步骤。")
         }
     }
 
@@ -53,9 +53,9 @@ struct InstallFlowSheet: View {
                 Spacer()
                 buttons()
             } else {
-                Text("Windows Steam 已离线，安装无法继续。").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                Text(String(localized: "Windows Steam 已离线，安装无法继续。")).font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 Spacer()
-                Button(engine.strings("Button_Close") ?? "关闭", action: onClose).keyboardShortcut(.cancelAction)
+                Button(engine.strings("Button_Close") ?? String(localized: "关闭"), action: onClose).keyboardShortcut(.cancelAction)
             }
         }
     }
@@ -66,7 +66,7 @@ struct InstallFlowSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     ForEach(eulas) { e in
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(e.title ?? "最终用户许可协议").font(.system(size: 14, weight: .semibold))
+                            Text(e.title ?? String(localized: "最终用户许可协议")).font(.system(size: 14, weight: .semibold))
                             if e.content != nil {
                                 if let text = rendered[e.id] {
                                     Text(text).font(.system(size: 12)).textSelection(.enabled)
@@ -74,7 +74,7 @@ struct InstallFlowSheet: View {
                                     ProgressView().controlSize(.small)
                                 }
                             } else {
-                                Link("在浏览器中阅读", destination: URL(string: e.url.replacingOccurrences(of: "http://", with: "https://"))!)
+                                Link(String(localized: "在浏览器中阅读"), destination: URL(string: e.url.replacingOccurrences(of: "http://", with: "https://"))!)
                                     .font(.system(size: 12))
                             }
                         }
@@ -85,13 +85,13 @@ struct InstallFlowSheet: View {
             }
             .frame(height: 380)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
-            footer(note: eulas.count > 1 ? "共 \(eulas.count) 份协议" : "") {
-                Button("拒绝") { engine.cancelInstall() }.keyboardShortcut(.cancelAction)
-                Button("同意并继续") { engine.acceptEulas() }.keyboardShortcut(.defaultAction)
+            footer(note: eulas.count > 1 ? String(localized: "共 \(eulas.count) 份协议") : "") {
+                Button(String(localized: "拒绝")) { engine.cancelInstall() }.keyboardShortcut(.cancelAction)
+                Button(String(localized: "同意并继续")) { engine.acceptEulas() }.keyboardShortcut(.defaultAction)
             }
         } else {
-            HStack(spacing: 10) { ProgressView().controlSize(.small); Text("正在读取协议…").font(.system(size: 12)) }
-            footer { Button("取消安装") { engine.cancelInstall() }.keyboardShortcut(.cancelAction) }
+            HStack(spacing: 10) { ProgressView().controlSize(.small); Text(String(localized: "正在读取协议…")).font(.system(size: 12)) }
+            footer { Button(String(localized: "取消安装")) { engine.cancelInstall() }.keyboardShortcut(.cancelAction) }
         }
     }
 
@@ -104,7 +104,7 @@ struct InstallFlowSheet: View {
                         Text(k.key).font(.system(size: 14, weight: .medium).monospaced()).textSelection(.enabled)
                     }
                     Spacer()
-                    Button("复制") {
+                    Button(String(localized: "复制")) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(k.key, forType: .string)
                     }
@@ -114,15 +114,15 @@ struct InstallFlowSheet: View {
             }
         }
         footer {
-            Button("取消安装") { engine.cancelInstall() }.keyboardShortcut(.cancelAction)
-            Button("继续") { engine.continueInstall() }.keyboardShortcut(.defaultAction)
+            Button(String(localized: "取消安装")) { engine.cancelInstall() }.keyboardShortcut(.cancelAction)
+            Button(String(localized: "继续")) { engine.continueInstall() }.keyboardShortcut(.defaultAction)
         }
     }
 
     @ViewBuilder private var other: some View {
-        Text(run.step == "password" ? "这个游戏需要预载解锁密码，Vapor 还不支持在这里输入。" : "Steam 要求注册第三方账号后才能继续。")
+        Text(run.step == "password" ? String(localized: "这个游戏需要预载解锁密码，Vapor 还不支持在这里输入。") : String(localized: "Steam 要求注册第三方账号后才能继续。"))
             .font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
-        footer { Button("取消安装") { engine.cancelInstall() }.keyboardShortcut(.defaultAction) }
+        footer { Button(String(localized: "取消安装")) { engine.cancelInstall() }.keyboardShortcut(.defaultAction) }
     }
 }
 

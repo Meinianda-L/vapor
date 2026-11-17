@@ -36,8 +36,8 @@ struct GameItem: Identifiable, Hashable {
     var firstRenderer: Renderer? { profile?.ladder.first?.renderer }
     var archLabel: String? {
         switch profile?.analysis.mainMachine {
-        case .i386: return "32 位"
-        case .amd64: return "64 位"
+        case .i386: return String(localized: "32 位")
+        case .amd64: return String(localized: "64 位")
         case .arm64: return "ARM64"
         default: return nil
         }

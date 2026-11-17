@@ -177,15 +177,15 @@ struct StorePageView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 Button(action: onClose) {
-                    Text("‹ 返回").font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
+                    Text(String(localized: "‹ 返回")).font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
                 }
                 .buttonStyle(.plain)
                 if let page {
                     content(page)
                 } else if failed {
                     HStack(spacing: 10) {
-                        Text("商店页面没有加载出来。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
-                        Button("重试") { attempt += 1 }.buttonStyle(.link).font(.system(size: 13))
+                        Text(String(localized: "商店页面没有加载出来。")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                        Button(String(localized: "重试")) { attempt += 1 }.buttonStyle(.link).font(.system(size: 13))
                     }
                     .padding(.top, 20)
                 } else {
@@ -264,7 +264,7 @@ struct StorePageView: View {
         media(p)
         if !p.genres.isEmpty || !p.categories.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                SectionLabel(text: "类型与特性")
+                SectionLabel(text: String(localized: "类型与特性"))
                 if !p.genres.isEmpty {
                     Text(p.genres.joined(separator: "  ·  ")).font(.system(size: 12.5)).foregroundStyle(Theme.text.opacity(0.85))
                 }
@@ -276,7 +276,7 @@ struct StorePageView: View {
         }
         if !about.characters.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                SectionLabel(text: "关于这款游戏")
+                SectionLabel(text: String(localized: "关于这款游戏"))
                 Text(about).font(.system(size: 12)).foregroundStyle(Theme.text.opacity(0.85))
                     .lineSpacing(4).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 720, alignment: .leading)
@@ -286,12 +286,12 @@ struct StorePageView: View {
         requirements(p)
         if !dlc.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                SectionLabel(text: "可下载内容")
+                SectionLabel(text: String(localized: "可下载内容"))
                 ForEach(dlc) { d in
                     HStack {
                         Text(d.name).font(.system(size: 12.5)).foregroundStyle(Theme.text).lineLimit(1)
                         Spacer()
-                        Text(d.price?.final ?? (d.free ? "免费" : "")).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondary)
+                        Text(d.price?.final ?? (d.free ? String(localized: "免费") : "")).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondary)
                     }
                     .padding(.vertical, 5)
                     Divider().overlay(Theme.hairline)
@@ -302,11 +302,11 @@ struct StorePageView: View {
 
     private func facts(_ p: StorePage) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            fact("发行日期", p.releaseDate)
-            fact("开发商", p.developers.joined(separator: "、"))
-            fact("发行商", p.publishers.joined(separator: "、"))
+            fact(String(localized: "发行日期"), p.releaseDate)
+            fact(String(localized: "开发商"), p.developers.joined(separator: "、"))
+            fact(String(localized: "发行商"), p.publishers.joined(separator: "、"))
             if let r = reviews {
-                fact("用户评测", "\(r.label)（\(r.positive * 100 / r.total)% 好评，\(r.total) 篇）")
+                fact(String(localized: "用户评测"), String(localized: "\(r.label)（\(r.positive * 100 / r.total)% 好评，\(r.total) 篇）"))
             }
             if let m = p.metacritic { fact("Metacritic", "\(m)") }
         }
@@ -326,20 +326,20 @@ struct StorePageView: View {
         HStack(spacing: 14) {
             if let app {
                 if let pr = engine.progress[appid], !pr.isInstalled {
-                    Text(pr.total > 0 ? "下载中 \(Int(pr.fraction * 100))%" : "排队中").font(.system(size: 13)).foregroundStyle(Theme.text)
+                    Text(pr.total > 0 ? String(localized: "下载中 \(Int(pr.fraction * 100))%") : String(localized: "排队中")).font(.system(size: 13)).foregroundStyle(Theme.text)
                 } else if app.installed {
                     HStack(spacing: 7) {
                         StatusDot(color: Theme.ok)
-                        Text("已安装").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text)
+                        Text(String(localized: "已安装")).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text)
                     }
                     if app.sizeOnDisk > 0 { Text(bytes(app.sizeOnDisk)).font(.system(size: 12)).foregroundStyle(Theme.secondary) }
                 } else {
-                    actionButton("安装", prominent: true) { installing = true }
+                    actionButton(String(localized: "安装"), prominent: true) { installing = true }
                         .disabled(engine.steam == nil || engine.busy)
                 }
-                Button("在库中查看") { openGame(appid) }.buttonStyle(.link).font(.system(size: 12.5))
+                Button(String(localized: "在库中查看")) { openGame(appid) }.buttonStyle(.link).font(.system(size: 12.5))
             } else if inLibrary {
-                Button("在库中查看") { openGame(appid) }.buttonStyle(.link).font(.system(size: 12.5))
+                Button(String(localized: "在库中查看")) { openGame(appid) }.buttonStyle(.link).font(.system(size: 12.5))
             } else {
                 if let price = p.price {
                     if price.discount > 0 {
@@ -348,23 +348,23 @@ struct StorePageView: View {
                     }
                     Text(price.final).font(.system(size: 17, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.text)
                     if carted == true {
-                        Button("已加入购物车 · 查看") { open(cartURL) }.buttonStyle(.link).font(.system(size: 12.5))
+                        Button(String(localized: "已加入购物车 · 查看")) { open(cartURL) }.buttonStyle(.link).font(.system(size: 12.5))
                     } else if let pkg = p.packages.first {
-                        actionButton(carted == false ? "重试加入购物车" : "加入购物车", prominent: true) {
+                        actionButton(carted == false ? String(localized: "重试加入购物车") : String(localized: "加入购物车"), prominent: true) {
                             Task { carted = (try? await engine.ui.addToCart(.init(.package, UInt32(pkg)))) != nil }
                         }
                     }
                 } else if p.isFree {
-                    Text("免费").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
-                    actionButton("免费开始", prominent: true) { installing = true }
+                    Text(String(localized: "免费")).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
+                    actionButton(String(localized: "免费开始"), prominent: true) { installing = true }
                         .disabled(engine.steam == nil || engine.busy)
                 } else if p.comingSoon {
-                    Text("尚未发行").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                    Text(String(localized: "尚未发行")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 }
                 if wished == true {
-                    Text("已在愿望单中").font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
+                    Text(String(localized: "已在愿望单中")).font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
                 } else {
-                    Button(wished == false ? "重试加入愿望单" : "加入愿望单") {
+                    Button(wished == false ? String(localized: "重试加入愿望单") : String(localized: "加入愿望单")) {
                         Task { wished = (try? await engine.ui.addToWishlist(appid)) != nil }
                     }
                     .buttonStyle(.link).font(.system(size: 12.5))
@@ -425,7 +425,7 @@ struct StorePageView: View {
                 Button { showRequirements.toggle() } label: {
                     HStack(spacing: 6) {
                         Text(showRequirements ? "▾" : "▸").font(.system(size: 10))
-                        SectionLabel(text: "系统需求")
+                        SectionLabel(text: String(localized: "系统需求"))
                     }
                     .foregroundStyle(Theme.secondary)
                 }
@@ -491,11 +491,11 @@ private struct ShotViewer: View {
             }
             .frame(minWidth: 960, minHeight: 540)
             HStack(spacing: 18) {
-                Button("上一张") { index = (index + shots.count - 1) % shots.count }.keyboardShortcut(.leftArrow, modifiers: [])
+                Button(String(localized: "上一张")) { index = (index + shots.count - 1) % shots.count }.keyboardShortcut(.leftArrow, modifiers: [])
                 Text("\(index + 1) / \(shots.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondary)
-                Button("下一张") { index = (index + 1) % shots.count }.keyboardShortcut(.rightArrow, modifiers: [])
+                Button(String(localized: "下一张")) { index = (index + 1) % shots.count }.keyboardShortcut(.rightArrow, modifiers: [])
                 Spacer()
-                Button("关闭", action: close).keyboardShortcut(.cancelAction)
+                Button(String(localized: "关闭"), action: close).keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 14).padding(.bottom, 12)
         }

@@ -7,11 +7,11 @@ enum OnboardingStep: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .welcome: return "欢迎使用 Vapor"
-        case .engine: return "Wine 引擎"
-        case .renderers: return "图形组件"
-        case .steam: return "安装 Steam"
-        case .firstLaunch: return "首次启动"
+        case .welcome: return String(localized: "欢迎使用 Vapor")
+        case .engine: return String(localized: "Wine 引擎")
+        case .renderers: return String(localized: "图形组件")
+        case .steam: return String(localized: "安装 Steam")
+        case .firstLaunch: return String(localized: "首次启动")
         }
     }
 }
@@ -21,11 +21,11 @@ enum OnboardingError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notEngine: return "这个文件是渲染包，不是 Wine 引擎。"
-        case .noEngine: return "还没有选定 Wine 引擎，请返回上一步。"
-        case .noSteam: return "没有找到刚安装的 Windows Steam。"
-        case .steamExited: return "Windows Steam 启动后意外退出了。"
-        case .noVariant: return "没有任何图形组件构建成功，请重试。"
+        case .notEngine: return String(localized: "这个文件是渲染包，不是 Wine 引擎。")
+        case .noEngine: return String(localized: "还没有选定 Wine 引擎，请返回上一步。")
+        case .noSteam: return String(localized: "没有找到刚安装的 Windows Steam。")
+        case .steamExited: return String(localized: "Windows Steam 启动后意外退出了。")
+        case .noVariant: return String(localized: "没有任何图形组件构建成功，请重试。")
         }
     }
 }
@@ -200,7 +200,7 @@ final class OnboardingModel: ObservableObject {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = "选择 Wine 引擎压缩包（.tar.xz 或 .tar.gz）"
+        panel.message = String(localized: "选择 Wine 引擎压缩包（.tar.xz 或 .tar.gz）")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         run { [self] in
             event = .extracting
@@ -238,7 +238,7 @@ final class OnboardingModel: ObservableObject {
         if !missing.isEmpty {
             let downloads = EngineDownloads()
             var assets: [RemoteAsset] = []
-            for r in missing { rows[r] = .working("读取版本信息", nil) }
+            for r in missing { rows[r] = .working(String(localized: "读取版本信息"), nil) }
             do { assets = try await downloads.remoteOptions() } catch {
                 try Task.checkCancellation()
                 for r in missing { packErrors[r] = Self.describe(error) }
@@ -260,17 +260,17 @@ final class OnboardingModel: ObservableObject {
         }
 
         packs = RendererPacks.discover(engines: known)
-        for r in VariantRenderer.allCases where packErrors[r] == nil { rows[r] = .working("构建中", nil) }
+        for r in VariantRenderer.allCases where packErrors[r] == nil { rows[r] = .working(String(localized: "构建中"), nil) }
         let result = await VariantBuilder().buildAll(from: engine, packs: packs)
         try Task.checkCancellation()
         for r in VariantRenderer.allCases {
             switch result[r] {
-            case .built: rows[r] = .ready("已构建")
-            case .upToDate: rows[r] = .ready("已就绪")
+            case .built: rows[r] = .ready(String(localized: "已构建"))
+            case .upToDate: rows[r] = .ready(String(localized: "已就绪"))
             case let .failed(message): rows[r] = .failed(message)
             case let .skipped(message):
                 if let error = packErrors[r] { rows[r] = .failed(error) }
-                else { rows[r] = .skipped(r == .d3dmetal ? "未检测到 Game Porting Toolkit，已跳过" : message) }
+                else { rows[r] = .skipped(r == .d3dmetal ? String(localized: "未检测到 Game Porting Toolkit，已跳过") : message) }
             case nil: rows[r] = .skipped("")
             }
         }
@@ -288,11 +288,11 @@ final class OnboardingModel: ObservableObject {
     static func describe(_ event: DownloadEvent) -> (String, Double?) {
         switch event {
         case let .downloading(received, total):
-            return ("下载中 \(megabytes(received)) / \(megabytes(total)) MB", total > 0 ? Double(received) / Double(total) : nil)
-        case .verifying: return ("正在校验 SHA-256", nil)
-        case .extracting: return ("正在解压", nil)
-        case .validating: return ("正在检查", nil)
-        case .finished: return ("完成", 1)
+            return (String(localized: "下载中 \(megabytes(received)) / \(megabytes(total)) MB"), total > 0 ? Double(received) / Double(total) : nil)
+        case .verifying: return (String(localized: "正在校验 SHA-256"), nil)
+        case .extracting: return (String(localized: "正在解压"), nil)
+        case .validating: return (String(localized: "正在检查"), nil)
+        case .finished: return (String(localized: "完成"), 1)
         }
     }
 
@@ -355,7 +355,7 @@ final class OnboardingModel: ObservableObject {
             }
             try await Task.sleep(nanoseconds: 1_000_000_000)
         }
-        throw WineSetupError.timeout("Steam 首次启动")
+        throw WineSetupError.timeout(String(localized: "Steam 首次启动"))
     }
 
     nonisolated private static func devtoolsAnswers() async -> Bool {
@@ -425,7 +425,7 @@ struct OnboardingView: View {
                     Capsule().fill(s.rawValue <= model.step.rawValue ? Theme.text : Theme.hairline).frame(height: 2)
                 }
             }
-            SectionLabel(text: "第 \(model.step.rawValue + 1) 步，共 \(OnboardingStep.allCases.count) 步")
+            SectionLabel(text: String(localized: "第 \(model.step.rawValue + 1) 步，共 \(OnboardingStep.allCases.count) 步"))
             Text(model.step.title).font(.system(size: 24, weight: .semibold)).foregroundStyle(Theme.text)
         }
         .padding(.bottom, 22)
@@ -446,7 +446,7 @@ struct OnboardingView: View {
             Rectangle().fill(Theme.hairline).frame(height: 1)
             HStack {
                 if model.step != .welcome && model.step != .firstLaunch {
-                    Button("返回", action: model.back).buttonStyle(.plain)
+                    Button(String(localized: "返回"), action: model.back).buttonStyle(.plain)
                         .font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 }
                 Spacer()
@@ -461,13 +461,13 @@ struct OnboardingView: View {
 
     private var primaryTitle: String {
         switch model.step {
-        case .welcome: return "开始"
+        case .welcome: return String(localized: "开始")
         case .engine:
-            if running { return model.event == nil ? "请稍候…" : "正在安装…" }
-            return model.showRemote ? "下载并使用" : "使用此引擎"
-        case .renderers: return running ? "正在准备…" : model.renderersDone ? "继续" : failed ? "重试" : "下载并构建"
-        case .steam: return running ? "正在安装…" : model.steamDone ? "继续" : failed ? "重试" : "安装 Steam"
-        case .firstLaunch: return running ? "正在启动…" : failed ? "重试" : "启动 Steam"
+            if running { return model.event == nil ? String(localized: "请稍候…") : String(localized: "正在安装…") }
+            return model.showRemote ? String(localized: "下载并使用") : String(localized: "使用此引擎")
+        case .renderers: return running ? String(localized: "正在准备…") : model.renderersDone ? String(localized: "继续") : failed ? String(localized: "重试") : String(localized: "下载并构建")
+        case .steam: return running ? String(localized: "正在安装…") : model.steamDone ? String(localized: "继续") : failed ? String(localized: "重试") : String(localized: "安装 Steam")
+        case .firstLaunch: return running ? String(localized: "正在启动…") : failed ? String(localized: "重试") : String(localized: "启动 Steam")
         }
     }
 
@@ -540,7 +540,7 @@ struct ProgressLine: View {
                 Text(text).font(.system(size: 12)).foregroundStyle(Theme.text).monospacedDigit()
                 Spacer()
                 if let onCancel {
-                    Button("取消", action: onCancel).buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    Button(String(localized: "取消"), action: onCancel).buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 }
             }
             if let fraction { ProgressView(value: min(max(fraction, 0), 1)).progressViewStyle(.linear).tint(Theme.text) }
@@ -594,16 +594,16 @@ private struct WelcomePage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Paragraph("Vapor 用 Windows 版 Steam 下载和运行游戏，再用原生的 Mac 界面呈现。你的 Mac 上还没有它，接下来 Vapor 会全部准备好：")
+            Paragraph(String(localized: "Vapor 用 Windows 版 Steam 下载和运行游戏，再用原生的 Mac 界面呈现。你的 Mac 上还没有它，接下来 Vapor 会全部准备好："))
             VStack(alignment: .leading, spacing: 12) {
-                item("1", "下载 Wine 引擎", "约 160 MB，已有可用引擎时可直接使用")
-                item("2", "准备图形组件", "DXMT 约 19 MB，DXVK 约 3 MB")
-                item("3", "创建独立的 Windows 环境并安装 Steam", "安装程序约 2 MB")
-                item("4", "首次启动 Steam 并登录", "Steam 客户端本身约 300 MB")
+                item("1", String(localized: "下载 Wine 引擎"), String(localized: "约 160 MB，已有可用引擎时可直接使用"))
+                item("2", String(localized: "准备图形组件"), String(localized: "DXMT 约 19 MB，DXVK 约 3 MB"))
+                item("3", String(localized: "创建独立的 Windows 环境并安装 Steam"), String(localized: "安装程序约 2 MB"))
+                item("4", String(localized: "首次启动 Steam 并登录"), String(localized: "Steam 客户端本身约 300 MB"))
             }
-            Paragraph("全程需要联网，并占用约 2 GB 磁盘空间。Vapor 不会读取或改动 Mac 版 Steam 及其中的任何文件，两者可以同时存在。")
+            Paragraph(String(localized: "全程需要联网，并占用约 2 GB 磁盘空间。Vapor 不会读取或改动 Mac 版 Steam 及其中的任何文件，两者可以同时存在。"))
             if let free = freeSpace, free < 3_000_000_000 {
-                Text("当前可用空间只有 \(OnboardingModel.megabytes(free)) MB，可能不够。")
+                Text(String(localized: "当前可用空间只有 \(OnboardingModel.megabytes(free)) MB，可能不够。"))
                     .font(.system(size: 12)).foregroundStyle(Theme.warn)
             }
         }
@@ -626,10 +626,10 @@ private struct EnginePage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Paragraph(model.showRemote
-                ? "Wine 负责在 Mac 上运行 Windows 程序。下载的文件都会校验 SHA-256，装在 Vapor 自己的目录里，不影响其他软件。推荐 Sikarugir 的 WS12 引擎，对 Steam 兼容最好。"
-                : "在这台 Mac 上找到了可用的 Wine 引擎。选一个即可，推荐排在最前面的。")
+                ? String(localized: "Wine 负责在 Mac 上运行 Windows 程序。下载的文件都会校验 SHA-256，装在 Vapor 自己的目录里，不影响其他软件。推荐 Sikarugir 的 WS12 引擎，对 Steam 兼容最好。")
+                : String(localized: "在这台 Mac 上找到了可用的 Wine 引擎。选一个即可，推荐排在最前面的。"))
             if !model.enginesLoaded && !model.showRemote {
-                ProgressLine(text: "正在查找引擎…", fraction: nil)
+                ProgressLine(text: String(localized: "正在查找引擎…"), fraction: nil)
             } else if model.showRemote {
                 remoteList
             } else {
@@ -649,11 +649,11 @@ private struct EnginePage: View {
             if model.work != .running {
                 HStack(spacing: 18) {
                     if model.showRemote, !model.visibleEngines.isEmpty {
-                        LinkButton("使用已有的引擎") { model.showRemote = false }
+                        LinkButton(String(localized: "使用已有的引擎")) { model.showRemote = false }
                     } else if !model.showRemote {
-                        LinkButton("下载新的…", action: model.openRemote)
+                        LinkButton(String(localized: "下载新的…"), action: model.openRemote)
                     }
-                    LinkButton("从本地文件导入…", action: model.importArchive)
+                    LinkButton(String(localized: "从本地文件导入…"), action: model.importArchive)
                 }
             }
         }
@@ -661,7 +661,7 @@ private struct EnginePage: View {
 
     @ViewBuilder private var remoteList: some View {
         if model.visibleRemote.isEmpty {
-            if model.work == .running { ProgressLine(text: "正在读取可下载的版本…", fraction: nil) }
+            if model.work == .running { ProgressLine(text: String(localized: "正在读取可下载的版本…"), fraction: nil) }
         } else {
             VStack(spacing: 6) {
                 ForEach(model.visibleRemote) { a in
@@ -676,13 +676,13 @@ private struct EnginePage: View {
     private func detail(_ e: WineEngine) -> String {
         var parts = [e.source.displayName]
         if let v = e.version { parts.append(v.hasPrefix("wine-") ? "Wine \(v.dropFirst(5))" : "Wine \(v)") }
-        if e.capabilities.hasWineMetal { parts.append("支持 Metal 图形") }
-        if e.capabilities.wow64 { parts.append("64 位") }
+        if e.capabilities.hasWineMetal { parts.append(String(localized: "支持 Metal 图形")) }
+        if e.capabilities.wow64 { parts.append(String(localized: "64 位")) }
         return parts.joined(separator: " · ")
     }
 
     private func detail(_ a: RemoteAsset) -> String {
-        "\(OnboardingModel.megabytes(a.size)) MB · " + (a.sha256 == nil ? "没有校验值" : "已通过 SHA-256 校验")
+        "\(OnboardingModel.megabytes(a.size)) MB · " + (a.sha256 == nil ? String(localized: "没有校验值") : String(localized: "已通过 SHA-256 校验"))
     }
 }
 
@@ -695,8 +695,8 @@ private struct RenderersPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Paragraph("图形组件把游戏的 DirectX 转成 Mac 的 Metal。Vapor 会下载 DXMT（约 19 MB）和 DXVK（约 3 MB），再为每种方案生成一份独立的引擎副本，游戏可以按需切换。")
-            Paragraph("D3DMetal 只来自 Apple 的 Game Porting Toolkit，Vapor 不能代为下载。装了就会自动使用，没装也不影响。")
+            Paragraph(String(localized: "图形组件把游戏的 DirectX 转成 Mac 的 Metal。Vapor 会下载 DXMT（约 19 MB）和 DXVK（约 3 MB），再为每种方案生成一份独立的引擎副本，游戏可以按需切换。"))
+            Paragraph(String(localized: "D3DMetal 只来自 Apple 的 Game Porting Toolkit，Vapor 不能代为下载。装了就会自动使用，没装也不影响。"))
             VStack(spacing: 0) {
                 ForEach(Array(Self.names.enumerated()), id: \.offset) { i, item in
                     if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
@@ -706,7 +706,7 @@ private struct RenderersPage: View {
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
             ErrorText(model: model)
             if model.renderersDone, model.rows.values.contains(where: { if case .failed = $0 { return true } else { return false } }) {
-                LinkButton("重新尝试失败的项目", action: model.prepareRenderers)
+                LinkButton(String(localized: "重新尝试失败的项目"), action: model.prepareRenderers)
             }
         }
     }
@@ -730,11 +730,11 @@ private struct RenderersPage: View {
     private func label(_ row: OnboardingModel.Row, _ renderer: VariantRenderer) -> String {
         switch row {
         case .waiting:
-            if renderer == .d3dmetal { return model.d3dMetalFound ? "已检测到" : "可选" }
-            return "等待"
+            if renderer == .d3dmetal { return model.d3dMetalFound ? String(localized: "已检测到") : String(localized: "可选") }
+            return String(localized: "等待")
         case let .working(text, _): return text
         case let .ready(text): return text
-        case let .skipped(text): return text.isEmpty ? "已跳过" : text
+        case let .skipped(text): return text.isEmpty ? String(localized: "已跳过") : text
         case let .failed(text): return text
         }
     }
@@ -768,13 +768,13 @@ private struct SteamPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Paragraph("Vapor 会在 \(prefix) 创建一个只属于它的 Windows 环境，下载 Steam 官方安装程序（约 2 MB）并静默安装。这一步通常需要一两分钟，Steam 客户端本身在下一步下载。")
+            Paragraph(String(localized: "Vapor 会在 \(prefix) 创建一个只属于它的 Windows 环境，下载 Steam 官方安装程序（约 2 MB）并静默安装。这一步通常需要一两分钟，Steam 客户端本身在下一步下载。"))
             VStack(spacing: 0) {
-                stage(0, "创建 Windows 环境")
+                stage(0, String(localized: "创建 Windows 环境"))
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                stage(1, "下载 Steam 安装程序")
+                stage(1, String(localized: "下载 Steam 安装程序"))
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                stage(2, "安装 Steam")
+                stage(2, String(localized: "安装 Steam"))
             }
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
             ErrorText(model: model)
@@ -787,7 +787,7 @@ private struct SteamPage: View {
             HStack {
                 Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(done || current ? Theme.text : Theme.secondary)
                 Spacer()
-                if done { Text("完成").font(.system(size: 12)).foregroundStyle(Theme.ok) }
+                if done { Text(String(localized: "完成")).font(.system(size: 12)).foregroundStyle(Theme.ok) }
                 else if current { Text(detail(index)).font(.system(size: 12)).foregroundStyle(Theme.text).monospacedDigit() }
             }
             if current {
@@ -805,8 +805,8 @@ private struct SteamPage: View {
         switch model.prefixStep {
         case let .downloadingSteam(received, total) where index == 1:
             return total > 0 ? "\(OnboardingModel.megabytes(received)) / \(OnboardingModel.megabytes(total)) MB" : "\(OnboardingModel.megabytes(received)) MB"
-        case .creatingPrefix where index == 0: return "首次创建较慢"
-        default: return "进行中"
+        case .creatingPrefix where index == 0: return String(localized: "首次创建较慢")
+        default: return String(localized: "进行中")
         }
     }
 }
@@ -816,7 +816,7 @@ private struct FirstLaunchPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Paragraph("Windows Steam 第一次启动时要下载自己的客户端文件，约 300 MB，之后每次启动都不会再下。它在后台运行，不会弹出窗口。完成后会进入登录页面。")
+            Paragraph(String(localized: "Windows Steam 第一次启动时要下载自己的客户端文件，约 300 MB，之后每次启动都不会再下。它在后台运行，不会弹出窗口。完成后会进入登录页面。"))
             if model.work == .running || model.finished {
                 ProgressLine(text: text, fraction: fraction)
             }
@@ -831,13 +831,13 @@ private struct FirstLaunchPage: View {
 
     private var text: String {
         switch model.launch {
-        case .starting: return "正在启动 Windows Steam…"
-        case .preparing: return "正在连接 Steam 更新服务器…"
+        case .starting: return String(localized: "正在启动 Windows Steam…")
+        case .preparing: return String(localized: "正在连接 Steam 更新服务器…")
         case let .downloading(done, total):
-            return "正在下载 Steam 客户端 \(OnboardingModel.megabytes(done * 1024)) / \(OnboardingModel.megabytes(total * 1024)) MB"
-        case .extracting: return "正在解压…"
-        case .installing: return "正在安装更新…"
-        case .connecting: return "正在启动 Steam 界面…"
+            return String(localized: "正在下载 Steam 客户端 \(OnboardingModel.megabytes(done * 1024)) / \(OnboardingModel.megabytes(total * 1024)) MB")
+        case .extracting: return String(localized: "正在解压…")
+        case .installing: return String(localized: "正在安装更新…")
+        case .connecting: return String(localized: "正在启动 Steam 界面…")
         }
     }
 }

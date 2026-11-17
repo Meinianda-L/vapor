@@ -37,41 +37,41 @@ struct DownloadsView: View {
                 header
                 pausedBanner
                 if !engine.uiOnline {
-                    Text(engine.isOnline ? "正在连接 Windows Steam…" : "Windows Steam 未运行。")
+                    Text(engine.isOnline ? String(localized: "正在连接 Windows Steam…") : String(localized: "Windows Steam 未运行。"))
                         .font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 } else {
                     RateGraph(history: engine.history, overview: engine.overview, strings: engine.strings)
                     if all.isEmpty {
-                        Text(t("Downloads_NoTransfers", "队列中无下载")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                        Text(t("Downloads_NoTransfers", String(localized: "队列中无下载"))).font(.system(size: 13)).foregroundStyle(Theme.secondary)
                     }
                     if let active {
-                        section(t("Downloads_Section_Active", "进行中"), count: nil) {
+                        section(t("Downloads_Section_Active", String(localized: "进行中")), count: nil) {
                             ActiveRow(item: active, overview: engine.overview, installs: installs, t: t)
                         }
                     }
-                    rows(t("Downloads_Section_Current", "即将进行"), upNext) { item, i in
+                    rows(t("Downloads_Section_Current", String(localized: "即将进行")), upNext) { item, i in
                         QueueRow(item: item, installs: installs,
-                                 status: i == 0 ? t("Downloads_State_UpNext", "下一个") : t("Downloads_State_Queued", "位于队列中"),
+                                 status: i == 0 ? t("Downloads_State_UpNext", String(localized: "下一个")) : t("Downloads_State_Queued", String(localized: "位于队列中")),
                                  actions: [.moveToTop, .remove])
                     }
-                    rows(t("Downloads_Section_NotQueued", "未安排"), unqueued) { item, _ in
+                    rows(t("Downloads_Section_NotQueued", String(localized: "未安排")), unqueued) { item, _ in
                         QueueRow(item: item, installs: installs,
-                                 status: item.paused ? t("Downloads_State_Paused", "已暂停") : t("Downloads_State_NotQueued", "未在队列中"),
+                                 status: item.paused ? t("Downloads_State_Paused", String(localized: "已暂停")) : t("Downloads_State_NotQueued", String(localized: "未在队列中")),
                                  actions: [.start, .remove])
                     }
-                    rows(t("Downloads_Section_Scheduled", "已安排"), scheduled) { item, _ in
+                    rows(t("Downloads_Section_Scheduled", String(localized: "已安排")), scheduled) { item, _ in
                         QueueRow(item: item, installs: installs,
-                                 status: t("Downloads_ScheduledFor", "安排于 %1$s", Self.time(item.deferredTime)),
+                                 status: t("Downloads_ScheduledFor", String(localized: "安排于 %1$s"), Self.time(item.deferredTime)),
                                  actions: [.start, .remove])
                     }
                     if !completed.isEmpty {
-                        section(t("Downloads_Section_Completed", "已完成"), count: completed.count,
-                                trailing: AnyView(Button(t("Downloads_RemoveAll", "清除全部")) {
+                        section(t("Downloads_Section_Completed", String(localized: "已完成")), count: completed.count,
+                                trailing: AnyView(Button(t("Downloads_RemoveAll", String(localized: "清除全部"))) {
                                     for c in completed { engine.removeFromQueue(c.appid) }
                                 }.buttonStyle(.plain).font(.system(size: 11.5)).foregroundStyle(Theme.secondary))) {
                             ForEach(completed, id: \.appid) { item in
                                 QueueRow(item: item, installs: installs,
-                                         status: t("Downloads_DownloadFinished", "完成于：%1$s", Self.time(item.completedTime)),
+                                         status: t("Downloads_DownloadFinished", String(localized: "完成于：%1$s"), Self.time(item.completedTime)),
                                          actions: [.remove])
                                 Divider().overlay(Theme.hairline)
                             }
@@ -92,9 +92,9 @@ struct DownloadsView: View {
         if engine.uiOnline && engine.downloadsPaused && all.contains(where: { !$0.completed }) {
             HStack(spacing: 12) {
                 Image(systemName: "pause.circle").font(.system(size: 15)).foregroundStyle(Theme.warn)
-                Text("下载已全部暂停，队列中的游戏不会开始下载。").font(.system(size: 12.5)).foregroundStyle(Theme.text)
+                Text(String(localized: "下载已全部暂停，队列中的游戏不会开始下载。")).font(.system(size: 12.5)).foregroundStyle(Theme.text)
                 Spacer()
-                Button(t("Downloads_Resume", "全部恢复")) { engine.setDownloadsPaused(false) }
+                Button(t("Downloads_Resume", String(localized: "全部恢复"))) { engine.setDownloadsPaused(false) }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.accent)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
@@ -104,17 +104,17 @@ struct DownloadsView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text("下载").font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
+            Text(String(localized: "下载")).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
             Spacer()
             // While paused, the banner below carries the resume button.
             if engine.uiOnline && !all.isEmpty && !engine.downloadsPaused {
-                Button(engine.downloadsPaused ? t("Downloads_Resume", "全部恢复") : t("Downloads_PauseAll", "全部暂停")) {
+                Button(engine.downloadsPaused ? t("Downloads_Resume", String(localized: "全部恢复")) : t("Downloads_PauseAll", String(localized: "全部暂停"))) {
                     engine.setDownloadsPaused(!engine.downloadsPaused)
                 }
                 .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
             }
             if let disk = engine.folders.first(where: \.isDefault) {
-                Text("剩余 \(bytes(disk.free))").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).padding(.leading, 14)
+                Text(String(localized: "剩余 \(bytes(disk.free))")).font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).padding(.leading, 14)
             }
         }
     }
@@ -149,7 +149,7 @@ struct DownloadsView: View {
         guard t > 0 else { return "—" }
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = Calendar.current.isDateInToday(Date(timeIntervalSince1970: TimeInterval(t))) ? "HH:mm" : "M月d日 HH:mm"
+        f.dateFormat = Calendar.current.isDateInToday(Date(timeIntervalSince1970: TimeInterval(t))) ? "HH:mm" : String(localized: "M月d日 HH:mm")
         return f.string(from: Date(timeIntervalSince1970: TimeInterval(t)))
     }
 }
@@ -193,10 +193,10 @@ private struct RateGraph: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             HStack(spacing: 28) {
-                stat(strings("Downloads_Stats_CurrentRate") ?? "当前", rate(overview?.networkBytesPerSecond ?? 0), Theme.accent)
-                stat(strings("Downloads_Stats_PeakRate") ?? "峰值", rate(peak), nil)
-                stat(strings("Downloads_Stats_TotalBytes") ?? "总计", (overview?.stages[safe: 2]?.done ?? 0) > 0 ? bytes(overview!.stages[2].done) : "—", nil)
-                stat(strings("Downloads_Stats_DiskRate") ?? "磁盘使用量", rate(overview?.diskBytesPerSecond ?? 0), Theme.secondary)
+                stat(strings("Downloads_Stats_CurrentRate") ?? String(localized: "当前"), rate(overview?.networkBytesPerSecond ?? 0), Theme.accent)
+                stat(strings("Downloads_Stats_PeakRate") ?? String(localized: "峰值"), rate(peak), nil)
+                stat(strings("Downloads_Stats_TotalBytes") ?? String(localized: "总计"), (overview?.stages[safe: 2]?.done ?? 0) > 0 ? bytes(overview!.stages[2].done) : "—", nil)
+                stat(strings("Downloads_Stats_DiskRate") ?? String(localized: "磁盘使用量"), rate(overview?.diskBytesPerSecond ?? 0), Theme.secondary)
             }
         }
     }
@@ -258,7 +258,7 @@ private struct ActiveRow: View {
                             .background(Circle().fill(Color.white.opacity(0.08)))
                     }
                     .buttonStyle(.plain).foregroundStyle(Theme.text)
-                    .help(paused ? t("Downloads_Resume_Tooltip", "继续下载") : t("Downloads_Pause_Tooltip", "暂停下载"))
+                    .help(paused ? t("Downloads_Resume_Tooltip", String(localized: "继续下载")) : t("Downloads_Pause_Tooltip", String(localized: "暂停下载")))
                 }
                 Text(state).font(.system(size: 12)).foregroundStyle(paused ? Theme.secondary : Theme.accent)
                 ProgressBar(fraction: fraction)
@@ -269,23 +269,23 @@ private struct ActiveRow: View {
     }
 
     private var state: String {
-        if paused { return t("Downloads_State_Paused", "已暂停") }
-        guard let s = ov?.state, s != "None" else { return t("Downloads_State_Starting", "正在开始下载") }
+        if paused { return t("Downloads_State_Paused", String(localized: "已暂停")) }
+        guard let s = ov?.state, s != "None" else { return t("Downloads_State_Starting", String(localized: "正在开始下载")) }
         return engine.strings("Downloads_State_\(s)") ?? s
     }
 
     private var meta: [String] {
         var parts = ["\(Int(fraction * 100))%"]
-        if total > 0 { parts.append(t("Downloads_DownloadedBytesInProgress", "已下载 %1$s / %2$s", bytes(done), bytes(total))) }
+        if total > 0 { parts.append(t("Downloads_DownloadedBytesInProgress", String(localized: "已下载 %1$s / %2$s"), bytes(done), bytes(total))) }
         if !paused, let secs = ov?.secondsRemaining, secs > 0 {
-            parts.append(secs >= 60 ? t("Downloads_State_MinutesRemaining", "剩余 %1$s 分钟", "\(secs / 60)")
-                                    : t("Downloads_State_SecondsRemaining", "剩余 %1$s 秒", "\(secs)"))
+            parts.append(secs >= 60 ? t("Downloads_State_MinutesRemaining", String(localized: "剩余 %1$s 分钟"), "\(secs / 60)")
+                                    : t("Downloads_State_SecondsRemaining", String(localized: "剩余 %1$s 秒"), "\(secs)"))
         }
         let kinds = item.contentTypes.compactMap { k -> String? in
             switch k {
-            case 0: return t("Downloads_ContentType_Content", "游戏内容")
-            case 1: return t("Downloads_ContentType_Workshop", "创意工坊内容")
-            case 2: return t("Downloads_ContentType_Shader", "着色器预缓存更新")
+            case 0: return t("Downloads_ContentType_Content", String(localized: "游戏内容"))
+            case 1: return t("Downloads_ContentType_Workshop", String(localized: "创意工坊内容"))
+            case 2: return t("Downloads_ContentType_Shader", String(localized: "着色器预缓存更新"))
             default: return nil
             }
         }
@@ -327,9 +327,9 @@ private struct QueueRow: View {
     private func button(_ a: Action) -> some View {
         let (symbol, help): (String, String) = {
             switch a {
-            case .moveToTop: return ("arrow.up.to.line", engine.strings("Downloads_MoveToTop_Tooltip") ?? "立即下载")
-            case .start: return ("arrow.down.circle", engine.strings("Downloads_MoveToTop_Tooltip") ?? "立即下载")
-            case .remove: return ("xmark", item.completed ? "从列表中清除" : "从队列中移除")
+            case .moveToTop: return ("arrow.up.to.line", engine.strings("Downloads_MoveToTop_Tooltip") ?? String(localized: "立即下载"))
+            case .start: return ("arrow.down.circle", engine.strings("Downloads_MoveToTop_Tooltip") ?? String(localized: "立即下载"))
+            case .remove: return ("xmark", item.completed ? String(localized: "从列表中清除") : String(localized: "从队列中移除"))
             }
         }()
         return Button {

@@ -61,8 +61,8 @@ struct StoreHomeView: View {
                 header.zIndex(1)
                 if data.homeFailed {
                     HStack(spacing: 10) {
-                        Text("商店没有加载出来。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
-                        Button("重试") { Task { await data.loadHome(engine, force: true) } }.buttonStyle(.link).font(.system(size: 13))
+                        Text(String(localized: "商店没有加载出来。")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                        Button(String(localized: "重试")) { Task { await data.loadHome(engine, force: true) } }.buttonStyle(.link).font(.system(size: 13))
                     }
                 } else {
                     FeaturedCarousel(items: data.shelves[.featured] ?? [], tagLine: { data.tagLine($0) }, openApp: openApp)
@@ -81,14 +81,14 @@ struct StoreHomeView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 22) {
-            Text("商店").font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
+            Text(String(localized: "商店")).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
             StoreSearchField(openApp: openApp) { push(.search($0)) }
                 .frame(maxWidth: 340)
             Spacer(minLength: 0)
             if engine.uiOnline {
-                StoreLink(title: "愿望单") { push(.wishlist) }
-                StoreLink(title: "购物车") { push(.cart) }
-                StoreLink(title: "账户") { push(.account) }
+                StoreLink(title: String(localized: "愿望单")) { push(.wishlist) }
+                StoreLink(title: String(localized: "购物车")) { push(.cart) }
+                StoreLink(title: String(localized: "账户")) { push(.account) }
             }
         }
     }
@@ -97,10 +97,10 @@ struct StoreHomeView: View {
         let items = data.shelves[.specials] ?? []
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                SectionLabel(text: "特别优惠")
+                SectionLabel(text: String(localized: "特别优惠"))
                 Spacer()
                 if !data.publicOnly {
-                    StoreLink(title: "浏览更多") { push(.browse(title: "特别优惠", query: .init(sort: .topSellers, discountedOnly: true))) }
+                    StoreLink(title: String(localized: "浏览更多")) { push(.browse(title: String(localized: "特别优惠"), query: .init(sort: .topSellers, discountedOnly: true))) }
                 }
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16, alignment: .top), count: 4), alignment: .leading, spacing: 20) {
@@ -117,7 +117,7 @@ struct StoreHomeView: View {
 
     private var tagGrid: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel(text: "按类型浏览")
+            SectionLabel(text: String(localized: "按类型浏览"))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), spacing: 8)], alignment: .leading, spacing: 8) {
                 ForEach(data.tags) { tag in
                     TagButton(title: tag.name) { push(.browse(title: tag.name, query: .init(sort: .topSellers, tagIDs: [tag.id]))) }
@@ -154,7 +154,7 @@ private struct FeaturedCarousel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel(text: "精选和推荐")
+            SectionLabel(text: String(localized: "精选和推荐"))
             if items.isEmpty {
                 RoundedRectangle(cornerRadius: 4).fill(Theme.surface).frame(height: 330)
             } else {
@@ -225,9 +225,9 @@ private struct StoreTabbedLists: View {
     @State private var tab = 0
 
     private var tabs: [(String, StoreData.Shelf, SteamUI.StoreQuery)] {
-        [("新品与热门", .newReleases, .init(sort: .topSellers, releasedWithinDays: 30)),
-         ("热销商品", .featured, .init(sort: .topSellers)),
-         ("即将推出", .comingSoon, .init(sort: .topSellers, comingSoonOnly: true))]
+        [(String(localized: "新品与热门"), .newReleases, .init(sort: .topSellers, releasedWithinDays: 30)),
+         (String(localized: "热销商品"), .featured, .init(sort: .topSellers)),
+         (String(localized: "即将推出"), .comingSoon, .init(sort: .topSellers, comingSoonOnly: true))]
     }
 
     var body: some View {
@@ -247,7 +247,7 @@ private struct StoreTabbedLists: View {
                     .buttonStyle(.plain)
                 }
                 Spacer()
-                if !data.publicOnly { StoreLink(title: "查看全部") { browse(title, query) } }
+                if !data.publicOnly { StoreLink(title: String(localized: "查看全部")) { browse(title, query) } }
             }
             Divider().overlay(Theme.hairline)
             if items.isEmpty {
@@ -284,7 +284,7 @@ struct StoreSearchField: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
-            TextField("搜索商店", text: $term)
+            TextField(String(localized: "搜索商店"), text: $term)
                 .textFieldStyle(.plain).font(.system(size: 13))
                 .focused($focused)
                 .onSubmit {
@@ -383,13 +383,13 @@ struct StoreBrowseView: View {
 
     private var title: String {
         switch source {
-        case .search(let t): return "“\(t)”的搜索结果"
+        case .search(let t): return String(localized: "“\(t)”的搜索结果")
         case .query(let t, _): return t
         }
     }
     private var sorts: [(SteamUI.StoreSort, String)] {
-        var list: [(SteamUI.StoreSort, String)] = [(.topSellers, "热销"), (.newest, "最新发行"), (.reviews, "用户评测"),
-                                                   (.priceAscending, "价格从低到高"), (.priceDescending, "价格从高到低")]
+        var list: [(SteamUI.StoreSort, String)] = [(.topSellers, String(localized: "热销")), (.newest, String(localized: "最新发行")), (.reviews, String(localized: "用户评测")),
+                                                   (.priceAscending, String(localized: "价格从低到高")), (.priceDescending, String(localized: "价格从高到低"))]
         if case .search = source { list.insert((.relevance, "相关度"), at: 0); list.removeAll { $0.0 == .topSellers || $0.0 == .reviews } }
         return list
     }
@@ -398,7 +398,7 @@ struct StoreBrowseView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                StoreLink(title: "‹ 返回", action: onClose)
+                StoreLink(title: String(localized: "‹ 返回"), action: onClose)
                 HStack(alignment: .firstTextBaseline, spacing: 16) {
                     Text(title).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
                     if total > 0 { Text(countLine).font(.system(size: 12)).foregroundStyle(Theme.secondary) }
@@ -406,7 +406,7 @@ struct StoreBrowseView: View {
                     Menu {
                         ForEach(sorts, id: \.0) { s in Button(s.1) { sort = s.0; page = 0 } }
                     } label: {
-                        Text("排序：\(sorts.first { $0.0 == sort }?.1 ?? "")").font(.system(size: 12.5))
+                        Text(String(localized: "排序：\(sorts.first { $0.0 == sort }?.1 ?? ")")").font(.system(size: 12.5))
                     }
                     .menuStyle(.borderlessButton).fixedSize()
                 }
@@ -415,13 +415,13 @@ struct StoreBrowseView: View {
                 }
                 if failed {
                     HStack(spacing: 10) {
-                        Text(engine.uiOnline ? "没有加载出来。" : "浏览商店需要 Windows Steam 在线。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
-                        if engine.uiOnline { Button("重试") { attempt += 1 }.buttonStyle(.link).font(.system(size: 13)) }
+                        Text(engine.uiOnline ? String(localized: "没有加载出来。") : String(localized: "浏览商店需要 Windows Steam 在线。")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                        if engine.uiOnline { Button(String(localized: "重试")) { attempt += 1 }.buttonStyle(.link).font(.system(size: 13)) }
                     }
                 } else if loading && items.isEmpty {
                     StoreSkeletonRows(count: 8)
                 } else if items.isEmpty {
-                    Text("没有找到符合条件的结果。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                    Text(String(localized: "没有找到符合条件的结果。")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 } else {
                     VStack(spacing: 2) {
                         ForEach(items) { item in
@@ -445,7 +445,7 @@ struct StoreBrowseView: View {
 
     private var countLine: String {
         if case .search = source, total > hits.count, hits.count > 0 { return "共 \(total) 个结果，显示最相关的 \(hits.count) 个" }
-        return "共 \(total) 个结果"
+        return String(localized: "共 \(total) 个结果")
     }
 
     private func detail(_ item: SteamUI.StoreItem) -> String {
@@ -455,9 +455,9 @@ struct StoreBrowseView: View {
     private var pager: some View {
         HStack(spacing: 16) {
             Spacer()
-            StoreLink(title: "‹ 上一页") { page -= 1 }.disabled(page == 0).opacity(page == 0 ? 0.35 : 1)
-            Text("第 \(page + 1) / \(pageCount) 页").font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondary)
-            StoreLink(title: "下一页 ›") { page += 1 }.disabled(page + 1 >= pageCount).opacity(page + 1 >= pageCount ? 0.35 : 1)
+            StoreLink(title: String(localized: "‹ 上一页")) { page -= 1 }.disabled(page == 0).opacity(page == 0 ? 0.35 : 1)
+            Text(String(localized: "第 \(page + 1) / \(pageCount) 页")).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondary)
+            StoreLink(title: String(localized: "下一页 ›")) { page += 1 }.disabled(page + 1 >= pageCount).opacity(page + 1 >= pageCount ? 0.35 : 1)
             Spacer()
         }
         .padding(.top, 8)

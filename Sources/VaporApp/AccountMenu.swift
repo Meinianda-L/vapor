@@ -18,7 +18,7 @@ struct AccountMenu: View {
         HStack(spacing: 10) {
             AccountAvatar(url: account?.avatar, name: account?.persona ?? "")
                 .onTapGesture { if let account { openProfile(account.steamID) } }
-                .help(engine.strings("UserManagement_ViewProfile") ?? "查看个人资料")
+                .help(engine.strings("UserManagement_ViewProfile") ?? String(localized: "查看个人资料"))
             menu
         }
         .padding(.horizontal, 10).frame(height: 44)
@@ -27,17 +27,17 @@ struct AccountMenu: View {
         .onHover { hovering = $0 }
         .onChange(of: hovering) { _, over in if over { engine.refreshLoginUsers() } }
         .task { engine.refreshLoginUsers() }
-        .alert(engine.strings("SignOut_Title") ?? "退出登录", isPresented: $confirmSignOut) {
-            Button("退出登录", role: .destructive) { engine.signOut() }
-            Button("取消", role: .cancel) {}
+        .alert(engine.strings("SignOut_Title") ?? String(localized: "退出登录"), isPresented: $confirmSignOut) {
+            Button(String(localized: "退出登录"), role: .destructive) { engine.signOut() }
+            Button(String(localized: "取消"), role: .cancel) {}
         } message: {
-            Text(engine.strings("SignOut_Description") ?? "退出后需要重新登录")
+            Text(engine.strings("SignOut_Description") ?? String(localized: "退出后需要重新登录"))
         }
     }
 
     private var menu: some View {
         Menu {
-            Picker("状态", selection: Binding(get: { account?.personaState ?? 0 }, set: { engine.setPersonaState($0) })) {
+            Picker(String(localized: "状态"), selection: Binding(get: { account?.personaState ?? 0 }, set: { engine.setPersonaState($0) })) {
                 ForEach(Self.states, id: \.value) { s in Text(engine.strings(s.key) ?? s.fallback).tag(s.value) }
             }
             .pickerStyle(.inline)
@@ -45,12 +45,12 @@ struct AccountMenu: View {
             .disabled(account == nil)
             Divider()
             if let account {
-                Button(engine.strings("UserManagement_ViewProfile") ?? "查看个人资料") { openProfile(account.steamID) }
-                Button(engine.strings("UserManagement_AccountDetails") ?? "账户详情", action: openAccount)
+                Button(engine.strings("UserManagement_ViewProfile") ?? String(localized: "查看个人资料")) { openProfile(account.steamID) }
+                Button(engine.strings("UserManagement_AccountDetails") ?? String(localized: "账户详情"), action: openAccount)
                 Divider()
             }
             if account != nil {
-                Menu(engine.strings("ChangeUser_Title") ?? "切换账户") {
+                Menu(engine.strings("ChangeUser_Title") ?? String(localized: "切换账户")) {
                     Picker("", selection: Binding(get: { account?.accountName ?? "" },
                                                   set: { if $0 != account?.accountName { engine.switchUser($0) } })) {
                         ForEach(engine.loginUsers) { Text(Self.name(of: $0)).tag($0.accountName) }
@@ -58,13 +58,13 @@ struct AccountMenu: View {
                     .pickerStyle(.inline)
                     .labelsHidden()
                     if !engine.loginUsers.isEmpty { Divider() }
-                    Button((engine.strings("Login_AddAccount") ?? "添加账户") + "…") { engine.addAccount() }
+                    Button((engine.strings("Login_AddAccount") ?? String(localized: "添加账户")) + "…") { engine.addAccount() }
                 }
-                Button("退出登录") { confirmSignOut = true }
+                Button(String(localized: "退出登录")) { confirmSignOut = true }
                 Divider()
             }
             if engine.sessionReplaced {
-                Text(engine.nativeSteamRunning ? "Mac 版 Steam 登录了同一账号" : "账号在其他设备上登录")
+                Text(engine.nativeSteamRunning ? String(localized: "Mac 版 Steam 登录了同一账号") : String(localized: "账号在其他设备上登录"))
             }
             if let title = engine.controlTitle {
                 Button(title) { engine.toggleSteam() }.disabled(engine.busy)
@@ -93,8 +93,8 @@ struct AccountMenu: View {
     private static func name(of user: SteamUI.LoginUser) -> String { user.persona.isEmpty ? user.accountName : user.persona }
 
     private static let states: [(value: Int, key: String, fallback: String)] = [
-        (1, "Menu_Status_Online", "在线"), (3, "Menu_Status_Away", "离开"),
-        (7, "Menu_Status_Invisible", "隐身"), (0, "Menu_Status_Offline", "离线"),
+        (1, "Menu_Status_Online", String(localized: "在线")), (3, "Menu_Status_Away", String(localized: "离开")),
+        (7, "Menu_Status_Invisible", String(localized: "隐身")), (0, "Menu_Status_Offline", String(localized: "离线")),
     ]
 
     private var statusLine: String {
@@ -115,10 +115,10 @@ struct AccountMenu: View {
 extension EngineModel {
     /// What the start/stop control should say, or nil when there is nothing to start (no Windows Steam found).
     var controlTitle: String? {
-        if sessionReplaced { return nativeSteamRunning ? "退出 Mac 版 Steam 并重新上线" : "重新上线" }
+        if sessionReplaced { return nativeSteamRunning ? String(localized: "退出 Mac 版 Steam 并重新上线") : String(localized: "重新上线") }
         guard steam != nil else { return nil }
-        if isOnline || connection == .starting { return "停止 Windows Steam" }
-        return connection == .needsLogin ? "登录 Windows Steam" : "启动 Windows Steam"
+        if isOnline || connection == .starting { return String(localized: "停止 Windows Steam") }
+        return connection == .needsLogin ? String(localized: "登录 Windows Steam") : String(localized: "启动 Windows Steam")
     }
 
     func toggleSteam() {

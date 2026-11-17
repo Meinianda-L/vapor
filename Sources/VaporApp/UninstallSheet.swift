@@ -24,15 +24,15 @@ struct UninstallSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("卸载 \(names.joined(separator: "、"))").font(.system(size: 15, weight: .semibold))
-            Text("会删除本地游戏文件" + (size.map { "（\(bytes($0))）" } ?? "") + "。开启了 Steam 云的存档不受影响，之后可以随时重新安装。")
+            Text(String(localized: "卸载 \(names.joined(separator: ")、"))").font(.system(size: 15, weight: .semibold))
+            Text(String(localized: "会删除本地游戏文件") + (size.map { "（\(bytes($0))）" } ?? "") + String(localized: "。开启了 Steam 云的存档不受影响，之后可以随时重新安装。"))
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()
-                Button("取消", action: dismiss).keyboardShortcut(.cancelAction)
-                Button("卸载", role: .destructive, action: confirm)
+                Button(String(localized: "取消"), action: dismiss).keyboardShortcut(.cancelAction)
+                Button(String(localized: "卸载"), role: .destructive, action: confirm)
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -52,15 +52,15 @@ struct NewCollectionSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("新收藏").font(.system(size: 15, weight: .semibold))
-            TextField("收藏名称", text: $name)
+            Text(String(localized: "新收藏")).font(.system(size: 15, weight: .semibold))
+            TextField(String(localized: "收藏名称"), text: $name)
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit(create)
             HStack {
                 Spacer()
-                Button("取消", action: dismiss).keyboardShortcut(.cancelAction)
-                Button("创建", action: create)
+                Button(String(localized: "取消"), action: dismiss).keyboardShortcut(.cancelAction)
+                Button(String(localized: "创建"), action: create)
                     .keyboardShortcut(.defaultAction)
                     .disabled(trimmed.isEmpty)
             }

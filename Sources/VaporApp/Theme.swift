@@ -28,10 +28,10 @@ enum Theme {
 
     static func verdictLabel(_ v: GameProfile.Verdict?) -> String {
         switch v {
-        case .expected: return "可运行"
-        case .needsTesting: return "待测试"
-        case .needsLauncher: return "需要第三方启动器"
-        case .blocked: return "无法运行"
+        case .expected: return String(localized: "可运行")
+        case .needsTesting: return String(localized: "待测试")
+        case .needsLauncher: return String(localized: "需要第三方启动器")
+        case .blocked: return String(localized: "无法运行")
         case nil: return "—"
         }
     }
@@ -45,24 +45,24 @@ enum Theme {
             text = String(text[..<r.lowerBound])
         }
         let map = [
-            "D3D12 is only translated by D3DMetal": "D3D12 只有 D3DMetal 能转译",
-            "engine also ships a D3D11 path": "引擎也带 D3D11 渲染路径",
-            "32-bit D3D11: DXMT has an i386 build": "32 位 D3D11，DXMT 有 i386 版本",
-            "D3D11 straight to Metal": "D3D11 直接转 Metal",
-            "alternative D3D11 -> Metal translator": "另一条 D3D11 → Metal 路径",
-            "D3D11 via Vulkan fallback": "经 Vulkan 的后备路径",
-            "last resort": "最后的后备",
-            "Valve quirk nod3d10": "Valve 配置 nod3d10",
-            "D3D10 straight to Metal": "D3D10 直接转 Metal",
-            "fallback": "后备",
-            "D3D9 via DXVK on a conformant Vulkan 1.3 driver": "D3D9 经 DXVK，跑在 KosmicKrisp 上",
-            "D3D9 via DXVK on MoltenVK": "D3D9 经 DXVK，跑在 MoltenVK 上",
-            "Wine's own D3D9": "Wine 自带的 D3D9",
-            "DirectDraw is handled by WineD3D": "DirectDraw 交给 WineD3D",
-            "OpenGL game: Wine's GL path": "OpenGL，走 Wine 的 GL 路径",
-            "native Vulkan game on MoltenVK": "原生 Vulkan，跑在 MoltenVK 上",
-            "native Vulkan game on KosmicKrisp": "原生 Vulkan，跑在 KosmicKrisp 上",
-            "no graphics API detected": "没有检测到图形 API",
+            "D3D12 is only translated by D3DMetal": String(localized: "D3D12 只有 D3DMetal 能转译"),
+            "engine also ships a D3D11 path": String(localized: "引擎也带 D3D11 渲染路径"),
+            "32-bit D3D11: DXMT has an i386 build": String(localized: "32 位 D3D11，DXMT 有 i386 版本"),
+            "D3D11 straight to Metal": String(localized: "D3D11 直接转 Metal"),
+            "alternative D3D11 -> Metal translator": String(localized: "另一条 D3D11 → Metal 路径"),
+            "D3D11 via Vulkan fallback": String(localized: "经 Vulkan 的后备路径"),
+            "last resort": String(localized: "最后的后备"),
+            "Valve quirk nod3d10": String(localized: "Valve 配置 nod3d10"),
+            "D3D10 straight to Metal": String(localized: "D3D10 直接转 Metal"),
+            "fallback": String(localized: "后备"),
+            "D3D9 via DXVK on a conformant Vulkan 1.3 driver": String(localized: "D3D9 经 DXVK，跑在 KosmicKrisp 上"),
+            "D3D9 via DXVK on MoltenVK": String(localized: "D3D9 经 DXVK，跑在 MoltenVK 上"),
+            "Wine's own D3D9": String(localized: "Wine 自带的 D3D9"),
+            "DirectDraw is handled by WineD3D": String(localized: "DirectDraw 交给 WineD3D"),
+            "OpenGL game: Wine's GL path": String(localized: "OpenGL，走 Wine 的 GL 路径"),
+            "native Vulkan game on MoltenVK": String(localized: "原生 Vulkan，跑在 MoltenVK 上"),
+            "native Vulkan game on KosmicKrisp": String(localized: "原生 Vulkan，跑在 KosmicKrisp 上"),
+            "no graphics API detected": String(localized: "没有检测到图形 API"),
         ]
         return (map[text] ?? text) + exe
     }
@@ -73,16 +73,16 @@ enum Theme {
         case .source2: return "Source 2"
         case .unity: return "Unity"
         case .unreal: return "Unreal"
-        case .unknown: return "未识别"
+        case .unknown: return String(localized: "未识别")
         }
     }
 
     static func machineLabel(_ m: PEFile.Machine?) -> String {
         switch m {
-        case .i386: return "x86 · 32 位"
+        case .i386: return String(localized: "x86 · 32 位")
         case .amd64: return "x86-64"
         case .arm64: return "ARM64"
-        default: return "未知"
+        default: return String(localized: "未知")
         }
     }
 

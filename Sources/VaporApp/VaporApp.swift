@@ -22,10 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if engine.downloading {
             let alert = NSAlert()
             let name = engine.downloads.first { $0.active && !$0.completed }.flatMap { engine.steamApps[$0.appid]?.name }
-            alert.messageText = name.map { "Steam 正在下载 \($0)" } ?? "Steam 正在下载"
-            alert.informativeText = "Steam 可以在后台继续下载，下次打开 Vapor 时接着显示进度。"
-            alert.addButton(withTitle: "继续在后台下载")
-            alert.addButton(withTitle: "停止并退出")
+            alert.messageText = name.map { String(localized: "Steam 正在下载 \($0)") } ?? String(localized: "Steam 正在下载")
+            alert.informativeText = String(localized: "Steam 可以在后台继续下载，下次打开 Vapor 时接着显示进度。")
+            alert.addButton(withTitle: String(localized: "继续在后台下载"))
+            alert.addButton(withTitle: String(localized: "停止并退出"))
             if alert.runModal() == .alertFirstButtonReturn { return .terminateNow }
         }
         // Closing the window quits too; then the sidebar's status is gone, so say what the wait is for.
@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.startAnimation(nil)
-        let label = NSTextField(labelWithString: "正在关闭 Steam…")
+        let label = NSTextField(labelWithString: String(localized: "正在关闭 Steam…"))
         let stack = NSStackView(views: [spinner, label])
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 20, bottom: 16, right: 20)

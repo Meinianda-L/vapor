@@ -215,9 +215,9 @@ struct WebPanel: View {
 
     private var bar: some View {
         HStack(spacing: 4) {
-            button("chevron.left", help: "后退", enabled: model.canGoBack) { model.webView.goBack() }
-            button("chevron.right", help: "前进", enabled: model.canGoForward) { model.webView.goForward() }
-            button(model.loading ? "xmark" : "arrow.clockwise", help: model.loading ? "停止" : "重新载入", enabled: true) {
+            button("chevron.left", help: String(localized: "后退"), enabled: model.canGoBack) { model.webView.goBack() }
+            button("chevron.right", help: String(localized: "前进"), enabled: model.canGoForward) { model.webView.goForward() }
+            button(model.loading ? "xmark" : "arrow.clockwise", help: model.loading ? String(localized: "停止") : String(localized: "重新载入"), enabled: true) {
                 if model.loading { model.webView.stopLoading() } else { _ = model.webView.reload() }
             }
             VStack(alignment: .leading, spacing: 1) {
@@ -227,7 +227,7 @@ struct WebPanel: View {
             }
             .padding(.leading, 10)
             Spacer(minLength: 12)
-            Button("在浏览器中打开") { model.openInBrowser() }
+            Button(String(localized: "在浏览器中打开")) { model.openInBrowser() }
                 .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                 .padding(.trailing, 6)
             Button { model.close() } label: {
@@ -235,7 +235,7 @@ struct WebPanel: View {
             }
             .buttonStyle(.plain).foregroundStyle(Theme.text)
             .keyboardShortcut(model.popups.isEmpty ? .cancelAction : nil)
-            .help("关闭")
+            .help(String(localized: "关闭"))
         }
         .padding(.horizontal, 10)
         .frame(height: 42)
@@ -272,7 +272,7 @@ private struct PopupLayer: View {
                         }
                         .buttonStyle(.plain).foregroundStyle(Theme.text)
                         .keyboardShortcut(.cancelAction)
-                        .help("关闭")
+                        .help(String(localized: "关闭"))
                     }
                     .padding(.leading, 14).padding(.trailing, 6)
                     .frame(height: 32)

@@ -163,7 +163,7 @@ final class RuntimesModel: ObservableObject {
             group.addTask { try await body() }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw WineSetupError.timeout("读取版本信息")
+                throw WineSetupError.timeout(String(localized: "读取版本信息"))
             }
             defer { group.cancelAll() }
             guard let first = try await group.next() else { throw CancellationError() }
@@ -173,7 +173,7 @@ final class RuntimesModel: ObservableObject {
 
     static func describe(_ error: Error) -> String {
         if let e = error as? WineSetupError { return e.description }
-        return error is LocalizedError ? error.localizedDescription : "操作没有完成。"
+        return error is LocalizedError ? error.localizedDescription : String(localized: "操作没有完成。")
     }
 
     /// Stops what the page started when it goes away; a variant already being cloned finishes on its own.
@@ -206,7 +206,7 @@ final class RuntimesModel: ObservableObject {
         var config = VaporConfig.load(from: locations.config)
         config.engineRoot = e.root.path
         do { try config.save(to: locations.config) } catch {
-            errors[.engines] = "没能保存设置：\(error.localizedDescription)"
+            errors[.engines] = String(localized: "没能保存设置：\(error.localizedDescription)")
             return
         }
         Task { await load() }
@@ -222,7 +222,7 @@ final class RuntimesModel: ObservableObject {
                     try FileManager.default.removeItem(at: folder)
                     if FileManager.default.fileExists(atPath: variants.path) { try FileManager.default.removeItem(at: variants) }
                     return nil
-                } catch { return "没能删除：\(error.localizedDescription)" }
+                } catch { return String(localized: "没能删除：\(error.localizedDescription)") }
             }.value
             guard let self else { return }
             errors[.engines] = failure
@@ -271,7 +271,7 @@ final class RuntimesModel: ObservableObject {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = "选择 Wine 引擎压缩包（.tar.xz 或 .tar.gz）"
+        panel.message = String(localized: "选择 Wine 引擎压缩包（.tar.xz 或 .tar.gz）")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let downloads = EngineDownloads(locations: locations)
         run(.importing, .remote) { [self] in
@@ -324,9 +324,9 @@ struct RuntimesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 34) {
-                Text("运行时").font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
+                Text(String(localized: "运行时")).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
                 if !model.loaded {
-                    Text("正在查找引擎…").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                    Text(String(localized: "正在查找引擎…")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 } else {
                     currentSection
                     installedSection
@@ -348,11 +348,11 @@ struct RuntimesView: View {
         }
         .onChange(of: engine.steam?.engine) { _, new in model.inUse = new }
         .onDisappear { model.stop() }
-        .confirmationDialog("删除 \(deleting?.name ?? "")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+        .confirmationDialog(String(localized: "删除 \(deleting?.name ?? ")")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                             presenting: deleting) { e in
-            Button("删除", role: .destructive) { model.delete(e) }
+            Button(String(localized: "删除"), role: .destructive) { model.delete(e) }
         } message: { _ in
-            Text("会删除这个引擎的文件和它生成的渲染器变体，不能撤销。已下载的图形组件不受影响。")
+            Text(String(localized: "会删除这个引擎的文件和它生成的渲染器变体，不能撤销。已下载的图形组件不受影响。"))
         }
     }
 
@@ -393,15 +393,15 @@ struct RuntimesView: View {
 
     private func capabilities(_ e: WineEngine) -> [String] {
         var out: [String] = []
-        if e.capabilities.hasWineMetal { out.append("支持 DXMT") }
-        if e.capabilities.hasD3DMetal { out.append("含 D3DMetal") }
-        if e.capabilities.wow64 { out.append("WoW64") } else if e.capabilities.supports32Bit { out.append("32 位") }
-        out += e.capabilities.bundledPacks.map { "自带 \($0.displayName)" }
+        if e.capabilities.hasWineMetal { out.append(String(localized: "支持 DXMT")) }
+        if e.capabilities.hasD3DMetal { out.append(String(localized: "含 D3DMetal")) }
+        if e.capabilities.wow64 { out.append("WoW64") } else if e.capabilities.supports32Bit { out.append(String(localized: "32 位")) }
+        out += e.capabilities.bundledPacks.map { String(localized: "自带 \($0.displayName)") }
         return out
     }
 
     private func progress(for job: RuntimesModel.Job, label: String? = nil, cancel: Bool = true) -> some View {
-        var text = label ?? "正在准备"
+        var text = label ?? String(localized: "正在准备")
         var fraction: Double?
         if let event = model.event { (text, fraction) = OnboardingModel.describe(event) }
         let onCancel: (() -> Void)? = cancel ? { model.cancelJob() } : nil
@@ -420,14 +420,14 @@ struct RuntimesView: View {
     // MARK: - 当前引擎
 
     @ViewBuilder private var currentSection: some View {
-        section("当前引擎") {
+        section(String(localized: "当前引擎")) {
             if let e = model.scan.current {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(e.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
                     MetaLine(parts: [e.source.displayName, wineVersion(e.version) ?? ""] + capabilities(e))
                     VStack(alignment: .leading, spacing: 6) {
-                        place("引擎位置", e.root)
-                        if let prefix = model.scan.prefix { place("Steam 环境", prefix) }
+                        place(String(localized: "引擎位置"), e.root)
+                        if let prefix = model.scan.prefix { place(String(localized: "Steam 环境"), prefix) }
                     }
                     .padding(.top, 4)
                     if let reason = e.unusableReason {
@@ -435,21 +435,21 @@ struct RuntimesView: View {
                     }
                     if model.restartPending {
                         HStack(spacing: 12) {
-                            Text(engine.engineSwitchBlocker ?? "Windows Steam 目前还在用上一个引擎，切换时会重新启动它。")
+                            Text(engine.engineSwitchBlocker ?? String(localized: "Windows Steam 目前还在用上一个引擎，切换时会重新启动它。"))
                                 .font(.system(size: 12)).foregroundStyle(Theme.secondary)
                             if engine.engineSwitchBlocker == nil {
-                                link("立即切换", enabled: model.job == nil) { engine.switchToConfiguredEngine() }
+                                link(String(localized: "立即切换"), enabled: model.job == nil) { engine.switchToConfiguredEngine() }
                             }
                         }
                     }
                 }
             } else if let root = model.configuredRoot {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("设置的引擎不在已发现的列表里。").font(.system(size: 13)).foregroundStyle(Theme.text)
-                    place("引擎位置", root)
+                    Text(String(localized: "设置的引擎不在已发现的列表里。")).font(.system(size: 13)).foregroundStyle(Theme.text)
+                    place(String(localized: "引擎位置"), root)
                 }
             } else {
-                Text("还没有选定引擎。在下面设为默认，或下载一个新的。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                Text(String(localized: "还没有选定引擎。在下面设为默认，或下载一个新的。")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
             }
         }
     }
@@ -459,16 +459,16 @@ struct RuntimesView: View {
             Text(label).font(.system(size: 12)).foregroundStyle(Theme.secondary).frame(width: 64, alignment: .leading)
             Text(tidy(url)).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text)
                 .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-            link("在访达中显示") { reveal(url) }
+            link(String(localized: "在访达中显示")) { reveal(url) }
         }
     }
 
     // MARK: - 已安装的引擎
 
     @ViewBuilder private var installedSection: some View {
-        section("已安装的引擎", error: .engines) {
+        section(String(localized: "已安装的引擎"), error: .engines) {
             if model.scan.engines.isEmpty {
-                Text("没有找到 Wine 引擎。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                Text(String(localized: "没有找到 Wine 引擎。")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
             }
             ForEach(model.scan.engines) { e in
                 row {
@@ -482,31 +482,31 @@ struct RuntimesView: View {
                     }
                 } trailing: {
                     HStack(spacing: 14) {
-                        if e.usable && !model.isCurrent(e) { link("设为默认") { model.makeDefault(e) } }
-                        link("在访达中显示") { reveal(e.root) }
-                        if model.ownedFolder(of: e) != nil { link("删除", destructive: true, enabled: model.canDelete(e)) { deleting = e } }
+                        if e.usable && !model.isCurrent(e) { link(String(localized: "设为默认")) { model.makeDefault(e) } }
+                        link(String(localized: "在访达中显示")) { reveal(e.root) }
+                        if model.ownedFolder(of: e) != nil { link(String(localized: "删除"), destructive: true, enabled: model.canDelete(e)) { deleting = e } }
                     }
                 }
                 Divider().overlay(Theme.hairline)
             }
             if model.scan.engines.contains(where: { model.ownedFolder(of: $0) != nil }) {
-                Text("只有 Vapor 自己下载的引擎可以在这里删除。").font(.system(size: 11)).foregroundStyle(Theme.tertiary).padding(.top, 8)
+                Text(String(localized: "只有 Vapor 自己下载的引擎可以在这里删除。")).font(.system(size: 11)).foregroundStyle(Theme.tertiary).padding(.top, 8)
             }
         }
     }
 
     private func status(_ e: WineEngine) -> String {
-        if model.isCurrent(e) { return model.isInUse(e) || model.inUse == nil ? "默认" : "默认，尚未切换" }
-        return e.usable ? "" : "不可用"
+        if model.isCurrent(e) { return model.isInUse(e) || model.inUse == nil ? String(localized: "默认") : String(localized: "默认，尚未切换") }
+        return e.usable ? "" : String(localized: "不可用")
     }
 
     // MARK: - 图形组件
 
     @ViewBuilder private var packsSection: some View {
         let checking = model.remoteState == .loading
-        section("图形组件", trailing: AnyView(HStack(spacing: 10) {
+        section(String(localized: "图形组件"), trailing: AnyView(HStack(spacing: 10) {
             if checking { ProgressView().controlSize(.small) }
-            link(checking ? "正在检查…" : "检查更新", enabled: !checking && model.job == nil) { model.loadRemote() }
+            link(checking ? String(localized: "正在检查…") : String(localized: "检查更新"), enabled: !checking && model.job == nil) { model.loadRemote() }
         }), error: .packs) {
             ForEach(PackKind.allCases, id: \.self) { kind in
                 packBlock(kind)
@@ -528,7 +528,7 @@ struct RuntimesView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(kind.displayName).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.text)
                     if packs.isEmpty {
-                        Text(kind == .d3dmetal ? "没有找到。需要 Game Porting Toolkit，或自带 D3DMetal 的引擎，Vapor 不提供下载。" : "还没有安装。")
+                        Text(kind == .d3dmetal ? String(localized: "没有找到。需要 Game Porting Toolkit，或自带 D3DMetal 的引擎，Vapor 不提供下载。") : String(localized: "还没有安装。"))
                             .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -537,9 +537,9 @@ struct RuntimesView: View {
                     EmptyView()
                 } else if let latest {
                     HStack(spacing: 12) {
-                        Text(haveLatest ? "已是最新 \(latest.release)" : "最新 \(latest.release)")
+                        Text(haveLatest ? String(localized: "已是最新 \(latest.release)") : String(localized: "最新 \(latest.release)"))
                             .font(.system(size: 11.5)).foregroundStyle(haveLatest ? Theme.secondary : Theme.text)
-                        if !haveLatest { link(packs.contains { $0.origin == .vapor } ? "更新" : "下载", enabled: model.job == nil) { model.download(latest) } }
+                        if !haveLatest { link(packs.contains { $0.origin == .vapor } ? String(localized: "更新") : String(localized: "下载"), enabled: model.job == nil) { model.download(latest) } }
                     }
                 }
             }
@@ -548,7 +548,7 @@ struct RuntimesView: View {
                 let users = model.scan.packUsers[pack.id] ?? []
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(pack.version).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.text)
-                    Text([pack.origin.displayName, users.isEmpty ? "未被引擎变体使用" : "用于 " + users.joined(separator: "、")]
+                    Text([pack.origin.displayName, users.isEmpty ? String(localized: "未被引擎变体使用") : String(localized: "用于 ") + users.joined(separator: "、")]
                         .joined(separator: "  ·  "))
                         .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).lineLimit(2)
                     Spacer(minLength: 0)
@@ -561,13 +561,13 @@ struct RuntimesView: View {
     // MARK: - 渲染器变体
 
     private static let rendererNames: [(VariantRenderer, String, String)] = [
-        (.dxmt, "DXMT", "DirectX 11 直接转 Metal"), (.dxvk, "DXVK", "经 Vulkan 的 DirectX 转译"),
-        (.d3dmetal, "D3DMetal", "Apple 的 DirectX 11/12 转译"), (.wined3d, "WineD3D", "Wine 自带，不需要额外组件"),
+        (.dxmt, "DXMT", String(localized: "DirectX 11 直接转 Metal")), (.dxvk, "DXVK", String(localized: "经 Vulkan 的 DirectX 转译")),
+        (.d3dmetal, "D3DMetal", String(localized: "Apple 的 DirectX 11/12 转译")), (.wined3d, "WineD3D", String(localized: "Wine 自带，不需要额外组件")),
     ]
 
     @ViewBuilder private var variantsSection: some View {
         let stale = VariantRenderer.allCases.contains { [.outdated, .missing].contains(model.scan.variants[$0]) }
-        section("渲染器变体", trailing: stale && model.job == nil ? AnyView(link("全部生成") { model.rebuildStale() }) : nil, error: .variants) {
+        section(String(localized: "渲染器变体"), trailing: stale && model.job == nil ? AnyView(link(String(localized: "全部生成")) { model.rebuildStale() }) : nil, error: .variants) {
             if let e = model.scan.current, e.usable {
                 ForEach(Self.rendererNames, id: \.0) { renderer, name, detail in
                     let state = model.scan.variants[renderer]
@@ -575,37 +575,37 @@ struct RuntimesView: View {
                         row {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(name).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.text)
-                                MetaLine(parts: [detail, model.scan.variantPacks[renderer].map { "组件 \($0.version)" } ?? ""], size: 11.5)
+                                MetaLine(parts: [detail, model.scan.variantPacks[renderer].map { String(localized: "组件 \($0.version)") } ?? ""], size: 11.5)
                             }
                         } trailing: {
                             if model.job != .variant(renderer) {
                                 HStack(spacing: 14) {
                                     Text(label(state)).font(.system(size: 12)).foregroundStyle(color(state))
-                                    if state != .noPack { link("重新生成", enabled: model.job == nil) { model.rebuild(renderer) } }
+                                    if state != .noPack { link(String(localized: "重新生成"), enabled: model.job == nil) { model.rebuild(renderer) } }
                                 }
                             }
                         }
                         if model.job == .variant(renderer) {
-                            progress(for: .variant(renderer), label: "正在生成", cancel: model.batch)
+                            progress(for: .variant(renderer), label: String(localized: "正在生成"), cancel: model.batch)
                         }
                     }
                     Divider().overlay(Theme.hairline)
                 }
-                Text("变体是 \(e.name) 的 APFS 克隆，只多出各自的图形库，几乎不占磁盘。游戏按渲染器选用对应的变体。")
+                Text(String(localized: "变体是 \(e.name) 的 APFS 克隆，只多出各自的图形库，几乎不占磁盘。游戏按渲染器选用对应的变体。"))
                     .font(.system(size: 11)).foregroundStyle(Theme.tertiary).padding(.top, 8)
             } else {
-                Text("先选定一个可用的引擎。").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                Text(String(localized: "先选定一个可用的引擎。")).font(.system(size: 13)).foregroundStyle(Theme.secondary)
             }
         }
     }
 
     private func label(_ s: RuntimesModel.VariantState?) -> String {
         switch s {
-        case .current: return "最新"
-        case .outdated: return "已过期"
-        case .missing: return "尚未生成"
-        case .noPack: return "缺少组件"
-        case .legacy: return "使用早期手工变体"
+        case .current: return String(localized: "最新")
+        case .outdated: return String(localized: "已过期")
+        case .missing: return String(localized: "尚未生成")
+        case .noPack: return String(localized: "缺少组件")
+        case .legacy: return String(localized: "使用早期手工变体")
         case nil: return "—"
         }
     }
@@ -623,20 +623,20 @@ struct RuntimesView: View {
     @ViewBuilder private var remoteSection: some View {
         let all = model.remoteEngines
         let shown = showAllRemote ? all : Array(all.prefix(6))
-        section("下载新引擎", trailing: AnyView(HStack(spacing: 14) {
-            link("从文件导入…", enabled: model.job == nil) { model.importArchive() }
+        section(String(localized: "下载新引擎"), trailing: AnyView(HStack(spacing: 14) {
+            link(String(localized: "从文件导入…"), enabled: model.job == nil) { model.importArchive() }
         }), error: .remote) {
             if model.job == .importing { progress(for: .importing) }
             switch model.remoteState {
             case .idle, .loading where all.isEmpty:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("正在读取可下载的版本…").font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
+                    Text(String(localized: "正在读取可下载的版本…")).font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
                 }
             case let .failed(message) where all.isEmpty:
                 HStack(spacing: 14) {
                     Text(message).font(.system(size: 12.5)).foregroundStyle(Theme.bad)
-                    link("重试") { model.loadRemote() }
+                    link(String(localized: "重试")) { model.loadRemote() }
                 }
             default:
                 ForEach(shown) { asset in
@@ -644,17 +644,17 @@ struct RuntimesView: View {
                         row {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(asset.installName).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.text)
-                                MetaLine(parts: [asset.release + (asset.prerelease ? "（预览版）" : ""),
+                                MetaLine(parts: [asset.release + (asset.prerelease ? String(localized: "（预览版）") : ""),
                                                  "\(OnboardingModel.megabytes(asset.size)) MB",
-                                                 asset.sha256 == nil ? "没有校验值" : "SHA-256 校验"], size: 11.5)
+                                                 asset.sha256 == nil ? String(localized: "没有校验值") : String(localized: "SHA-256 校验")], size: 11.5)
                             }
                         } trailing: {
                             if model.job == .engine(asset.id) {
                                 EmptyView()
                             } else if model.installedRemote.contains(asset.id) {
-                                Text("已安装").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                                Text(String(localized: "已安装")).font(.system(size: 12)).foregroundStyle(Theme.secondary)
                             } else {
-                                link("下载", enabled: model.job == nil) { model.download(asset) }
+                                link(String(localized: "下载"), enabled: model.job == nil) { model.download(asset) }
                             }
                         }
                         if model.job == .engine(asset.id) { progress(for: .engine(asset.id)) }
@@ -662,10 +662,10 @@ struct RuntimesView: View {
                     Divider().overlay(Theme.hairline)
                 }
                 if all.count > shown.count {
-                    link("显示全部 \(all.count) 个") { showAllRemote = true }.padding(.top, 10)
+                    link(String(localized: "显示全部 \(all.count) 个")) { showAllRemote = true }.padding(.top, 10)
                 }
                 if all.isEmpty {
-                    Text("没有可下载的引擎。").font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
+                    Text(String(localized: "没有可下载的引擎。")).font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
                 }
             }
         }

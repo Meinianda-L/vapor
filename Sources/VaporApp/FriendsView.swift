@@ -87,16 +87,16 @@ struct FriendsView: View {
             VStack(alignment: .leading, spacing: 30) {
                 header
                 if !engine.uiOnline {
-                    note(engine.isOnline ? "正在读取…" : "Windows Steam 未运行")
+                    note(engine.isOnline ? String(localized: "正在读取…") : String(localized: "Windows Steam 未运行"))
                 } else if friends == nil {
-                    note(failed ? "读取好友列表失败，稍后重试" : "正在读取…")
+                    note(failed ? String(localized: "读取好友列表失败，稍后重试") : String(localized: "正在读取…"))
                 } else if friends?.isEmpty == true {
-                    note("好友列表为空")
+                    note(String(localized: "好友列表为空"))
                 } else if g.matchCount == 0 {
-                    note("没有匹配的好友")
+                    note(String(localized: "没有匹配的好友"))
                 } else {
-                    section(t("Settings_Page_InGame", "游戏中"), g.playing, unread)
-                    section(t("Menu_Status_Online", "在线"), g.online, unread)
+                    section(t("Settings_Page_InGame", String(localized: "游戏中")), g.playing, unread)
+                    section(t("Menu_Status_Online", String(localized: "在线")), g.online, unread)
                     offlineSection(g.offline, unread)
                 }
             }
@@ -139,7 +139,7 @@ struct FriendsView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(t("Menu_Friends", "好友")).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
+            Text(t("Menu_Friends", String(localized: "好友"))).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
             Spacer()
             if engine.uiOnline && friends?.isEmpty == false { SearchField(text: $query) }
         }
@@ -177,11 +177,11 @@ struct FriendsView: View {
             HStack {
                 SectionLabel(text: "\(t("Menu_Status_Offline", "离线"))（\(items.count)）")
                 Spacer()
-                toggle("显示")
+                toggle(String(localized: "显示"))
             }
         } else {
-            section(t("Menu_Status_Offline", "离线"), items, unread,
-                    trailing: items.count > Self.offlineLimit && query.isEmpty ? AnyView(toggle("隐藏")) : nil)
+            section(t("Menu_Status_Offline", String(localized: "离线")), items, unread,
+                    trailing: items.count > Self.offlineLimit && query.isEmpty ? AnyView(toggle(String(localized: "隐藏"))) : nil)
         }
     }
 
@@ -211,14 +211,14 @@ extension SteamUI.Friend {
     @MainActor
     func personaLabel(_ engine: EngineModel) -> String {
         switch state {
-        case 0: return engine.strings("Menu_Status_Offline") ?? "离线"
-        case 1: return engine.strings("Menu_Status_Online") ?? "在线"
-        case 2: return "忙碌"
-        case 7: return "隐身"
-        case 3, 4: return engine.strings("Menu_Status_Away") ?? "离开"
-        case 5: return "想交易"
-        case 6: return "想玩游戏"
-        default: return engine.strings("Menu_Status_Online") ?? "在线"
+        case 0: return engine.strings("Menu_Status_Offline") ?? String(localized: "离线")
+        case 1: return engine.strings("Menu_Status_Online") ?? String(localized: "在线")
+        case 2: return String(localized: "忙碌")
+        case 7: return String(localized: "隐身")
+        case 3, 4: return engine.strings("Menu_Status_Away") ?? String(localized: "离开")
+        case 5: return String(localized: "想交易")
+        case 6: return String(localized: "想玩游戏")
+        default: return engine.strings("Menu_Status_Online") ?? String(localized: "在线")
         }
     }
 
@@ -231,7 +231,7 @@ extension SteamUI.Friend {
 
     static func lastSeen(_ time: Int) -> String {
         let seen = Date(timeIntervalSince1970: TimeInterval(time))
-        return "上次在线 \(relative.localizedString(for: seen, relativeTo: Date()))"
+        return String(localized: "上次在线 \(relative.localizedString(for: seen, relativeTo: Date()))")
     }
 }
 
@@ -284,7 +284,7 @@ private struct FriendRow: View {
             }
             .buttonStyle(.plain)
             if hovering {
-                Button("资料") { profile(friend.steamID) }
+                Button(String(localized: "资料")) { profile(friend.steamID) }
                     .buttonStyle(.plain).font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
             }
             if unread > 0 {
@@ -298,7 +298,7 @@ private struct FriendRow: View {
         .padding(.vertical, 8)
         .background(selected || hovering ? Theme.surface : .clear)
         .onHover { hovering = $0 }
-        .contextMenu { Button("查看个人资料") { profile(friend.steamID) } }
+        .contextMenu { Button(String(localized: "查看个人资料")) { profile(friend.steamID) } }
     }
 }
 

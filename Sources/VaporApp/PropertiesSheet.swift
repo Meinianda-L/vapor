@@ -26,10 +26,10 @@ struct PropertiesSheet: View {
 
     private func title(_ p: Page) -> String {
         switch p {
-        case .general: return t("AppProperties_GeneralPage", "通用")
-        case .updates: return t("AppProperties_UpdatesPage", "更新")
-        case .files: return t("AppProperties_LocalFilesPage", "已安装文件")
-        case .betas: return t("AppProperties_BetasPage", "游戏版本及测试版")
+        case .general: return t("AppProperties_GeneralPage", String(localized: "通用"))
+        case .updates: return t("AppProperties_UpdatesPage", String(localized: "更新"))
+        case .files: return t("AppProperties_LocalFilesPage", String(localized: "已安装文件"))
+        case .betas: return t("AppProperties_BetasPage", String(localized: "游戏版本及测试版"))
         case .dlc: return t("AppProperties_DLCPage", "DLC")
         }
     }
@@ -52,7 +52,7 @@ struct PropertiesSheet: View {
                     .foregroundStyle(page == p ? Theme.text : Theme.secondary)
                 }
                 Spacer()
-                Button("完成") { commitLaunchOptions(); dismiss() }.keyboardShortcut(.defaultAction).padding(.horizontal, 10)
+                Button(String(localized: "完成")) { commitLaunchOptions(); dismiss() }.keyboardShortcut(.defaultAction).padding(.horizontal, 10)
             }
             .padding(16)
             .frame(width: 190)
@@ -80,9 +80,9 @@ struct PropertiesSheet: View {
         .background(Theme.background)
         .task { await load() }
         .onDisappear { commitLaunchOptions() }
-        .confirmationDialog("卸载 \(details?.name ?? "")？", isPresented: $confirmUninstall) {
-            Button("卸载", role: .destructive) { engine.uninstall(appid); dismiss() }
-        } message: { Text("会删除本地游戏文件。开启了 Steam 云的存档不受影响。") }
+        .confirmationDialog(String(localized: "卸载 \(details?.name ?? ")")？", isPresented: $confirmUninstall) {
+            Button(String(localized: "卸载"), role: .destructive) { engine.uninstall(appid); dismiss() }
+        } message: { Text(String(localized: "会删除本地游戏文件。开启了 Steam 云的存档不受影响。")) }
     }
 
     private func load() async {
@@ -137,7 +137,7 @@ struct PropertiesSheet: View {
     // MARK: pages
 
     @ViewBuilder private func general(_ d: SteamUI.AppDetails) -> some View {
-        group(t("AppProperties_LaunchOptionsSection", "启动选项"), t("AppProperties_LaunchOptionsDescription", "高级用户可以选择输入对启动选项的修改。") + " Vapor 启动游戏时也会带上这些参数。") {
+        group(t("AppProperties_LaunchOptionsSection", String(localized: "启动选项")), t("AppProperties_LaunchOptionsDescription", String(localized: "高级用户可以选择输入对启动选项的修改。")) + String(localized: " Vapor 启动游戏时也会带上这些参数。")) {
             TextField("", text: $launchOptions)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12).monospaced())
@@ -146,7 +146,7 @@ struct PropertiesSheet: View {
                 .onChange(of: launchOptionsFocused) { _, focused in if !focused { commitLaunchOptions() } }
         }
         if d.languages.count > 1 {
-            group(t("AppProperties_SelectLanguage", "语言"), t("AppProperties_SelectLanguage_Description", "选择您希望 %1$s 使用的语言", d.name)) {
+            group(t("AppProperties_SelectLanguage", String(localized: "语言")), t("AppProperties_SelectLanguage_Description", String(localized: "选择您希望 %1$s 使用的语言"), d.name)) {
                 Picker("", selection: bind("language", d, \.selectedLanguage) { try await $0.setLanguage(appid, $1) }) {
                     ForEach(d.languages, id: \.self) { l in Text(engine.strings("Language_\(l.id)") ?? l.name).tag(l.id) }
                 }
@@ -154,80 +154,80 @@ struct PropertiesSheet: View {
             }
         }
         if d.cloudAvailable {
-            group(t("AppProperties_SteamCloudSection", "Steam 云"), t("AppProperties_SteamCloudDescription", "Steam 云会储存信息，以便您在不同计算机上的产品体验一致。")) {
-                Toggle(t("AppProperties_EnableSteamCloud", "将 %1$s 的游戏存档保存于 Steam 云", d.name),
+            group(t("AppProperties_SteamCloudSection", String(localized: "Steam 云")), t("AppProperties_SteamCloudDescription", String(localized: "Steam 云会储存信息，以便您在不同计算机上的产品体验一致。"))) {
+                Toggle(t("AppProperties_EnableSteamCloud", String(localized: "将 %1$s 的游戏存档保存于 Steam 云"), d.name),
                        isOn: bind("cloud", d, \.cloudEnabled, toggle: true) { ui, _ in try await ui.toggleCloud(appid) })
                     .disabled(!d.cloudEnabledForAccount || pending["cloud"] != nil)
-                MetaLine(parts: [t("AppProperties_SteamCloudStored", "%1$s 已存储", d.cloudUsed), t("AppProperties_SteamCloudAvailable", "%1$s 可用", d.cloudFree)], size: 11)
+                MetaLine(parts: [t("AppProperties_SteamCloudStored", String(localized: "%1$s 已存储"), d.cloudUsed), t("AppProperties_SteamCloudAvailable", String(localized: "%1$s 可用"), d.cloudFree)], size: 11)
             }
         }
     }
 
     @ViewBuilder private func updates(_ d: SteamUI.AppDetails) -> some View {
         if d.thirdPartyUpdater {
-            Text(t("AppProperties_IsThirdPartyUpdater", "%1$s 当前使用第三方软件来升级自己的文件。", d.name)).font(.system(size: 12)).foregroundStyle(Theme.secondary)
+            Text(t("AppProperties_IsThirdPartyUpdater", String(localized: "%1$s 当前使用第三方软件来升级自己的文件。"), d.name)).font(.system(size: 12)).foregroundStyle(Theme.secondary)
         }
-        group(t("AppProperties_AutoUpdateSection", "自动更新"), nil) {
+        group(t("AppProperties_AutoUpdateSection", String(localized: "自动更新")), nil) {
             Picker("", selection: bind("autoUpdate", d, \.autoUpdate) { try await $0.setAutoUpdate(appid, $1) }) {
-                Text(t("AppProperties_AutoUpdateAlways", "由 Steam 决定何时更新")).tag(0)
-                Text(t("AppProperties_AutoUpdateOnLaunch", "等到我启动游戏时")).tag(1)
-                Text(t("AppProperties_AutoUpdateHighPriority", "立即下载更新")).tag(2)
+                Text(t("AppProperties_AutoUpdateAlways", String(localized: "由 Steam 决定何时更新"))).tag(0)
+                Text(t("AppProperties_AutoUpdateOnLaunch", String(localized: "等到我启动游戏时"))).tag(1)
+                Text(t("AppProperties_AutoUpdateHighPriority", String(localized: "立即下载更新"))).tag(2)
             }
             .labelsHidden().pickerStyle(.radioGroup)
-            MetaLine(parts: [t("AppProperties_AutoUpdateBuild", "生成版本 ID：%1$s", "\(d.buildID)"),
+            MetaLine(parts: [t("AppProperties_AutoUpdateBuild", String(localized: "生成版本 ID：%1$s"), "\(d.buildID)"),
                              d.lastUpdated > 0 ? DownloadsView.time(d.lastUpdated) : ""], size: 11)
         }
-        group(t("AppProperties_BackgroundDownloadsSection", "后台下载"), t("AppProperties_BackgroundDownloadsDescription", "当运行 %1$s 时，是否允许 Steam 下载其他更新？", d.name)) {
+        group(t("AppProperties_BackgroundDownloadsSection", String(localized: "后台下载")), t("AppProperties_BackgroundDownloadsDescription", String(localized: "当运行 %1$s 时，是否允许 Steam 下载其他更新？"), d.name)) {
             Picker("", selection: bind("backgroundDownloads", d, \.backgroundDownloads) { try await $0.setBackgroundDownloads(appid, $1) }) {
-                Text(t("AppProperties_BackgroundDownloadGlobal_Pause", "在运行时暂停后台下载") + " " + t("AppProperties_BackgroundDownloadGlobal_Description", "（按照我的 Steam 全局设置）")).tag(0)
-                Text(t("AppProperties_BackgroundDownloadAlways", "始终允许后台下载")).tag(1)
-                Text(t("AppProperties_BackgroundDownloadNever", "从不允许后台下载")).tag(2)
+                Text(t("AppProperties_BackgroundDownloadGlobal_Pause", String(localized: "在运行时暂停后台下载")) + " " + t("AppProperties_BackgroundDownloadGlobal_Description", String(localized: "（按照我的 Steam 全局设置）"))).tag(0)
+                Text(t("AppProperties_BackgroundDownloadAlways", String(localized: "始终允许后台下载"))).tag(1)
+                Text(t("AppProperties_BackgroundDownloadNever", String(localized: "从不允许后台下载"))).tag(2)
             }
             .labelsHidden().pickerStyle(.radioGroup)
         }
     }
 
     @ViewBuilder private func files(_ d: SteamUI.AppDetails) -> some View {
-        group(t("AppProperties_LocalFilesSize", "安装大小："), nil) {
-            Text(d.installed ? "\(bytes(d.diskUsage))\(d.dlcUsage > 0 ? "（含 DLC \(bytes(d.dlcUsage))）" : "")" : "未安装")
+        group(t("AppProperties_LocalFilesSize", String(localized: "安装大小：")), nil) {
+            Text(d.installed ? "\(bytes(d.diskUsage))\(d.dlcUsage > 0 ? "（含 DLC \(bytes(d.dlcUsage))）" : "")" : String(localized: "未安装"))
                 .font(.system(size: 13, weight: .medium))
             if !d.installFolder.isEmpty {
                 HStack {
                     Text(d.installFolder).font(.system(size: 11).monospaced()).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
                     Spacer()
-                    Button(t("AppProperties_LocalFilesBrowse", "浏览…")) { engine.reveal(windowsPath: d.installFolder) }
+                    Button(t("AppProperties_LocalFilesBrowse", String(localized: "浏览…"))) { engine.reveal(windowsPath: d.installFolder) }
                 }
             }
         }
         if d.installed {
-            row(t("AppProperties_LocalFilesVerify_game", "验证游戏文件的完整性"), t("AppProperties_LocalFilesVerifyLabel_game", "验证此游戏的文件是否已正确安装"), "验证") {
+            row(t("AppProperties_LocalFilesVerify_game", String(localized: "验证游戏文件的完整性")), t("AppProperties_LocalFilesVerifyLabel_game", String(localized: "验证此游戏的文件是否已正确安装")), String(localized: "验证")) {
                 engine.verify(appid)
             }
             if engine.folders.count > 1 {
-                group(t("AppProperties_LocalFilesMove", "移动安装文件夹"), t("AppProperties_LocalFilesMoveLabel_game", "将此游戏的内容移至另一文件夹或硬盘")) {
+                group(t("AppProperties_LocalFilesMove", String(localized: "移动安装文件夹")), t("AppProperties_LocalFilesMoveLabel_game", String(localized: "将此游戏的内容移至另一文件夹或硬盘"))) {
                     ForEach(engine.folders.filter { $0.index != d.installFolderIndex }, id: \.index) { f in
                         HStack {
                             Text(f.path).font(.system(size: 11).monospaced()).foregroundStyle(Theme.secondary)
                             Spacer()
-                            Button("移到这里") { apply { try await $0.moveInstall(appid, toFolder: f.index) } }
+                            Button(String(localized: "移到这里")) { apply { try await $0.moveInstall(appid, toFolder: f.index) } }
                         }
                     }
                 }
             }
-            row("卸载", "删除本地游戏文件，之后可以随时重新安装。", "卸载…", destructive: true) { confirmUninstall = true }
+            row(String(localized: "卸载"), String(localized: "删除本地游戏文件，之后可以随时重新安装。"), String(localized: "卸载…"), destructive: true) { confirmUninstall = true }
         }
     }
 
     @ViewBuilder private func betas(_ d: SteamUI.AppDetails) -> some View {
-        group(t("AppProperties_Beta_Selection", "已选中的游戏版本"), t("AppProperties_Beta_SelectionDescription", "此处的版本由游戏开发者提供，可能是游戏不稳定的测试版或旧版本。请谨慎操作。")) {
+        group(t("AppProperties_Beta_Selection", String(localized: "已选中的游戏版本")), t("AppProperties_Beta_SelectionDescription", String(localized: "此处的版本由游戏开发者提供，可能是游戏不稳定的测试版或旧版本。请谨慎操作。"))) {
             Picker("", selection: bind("beta", d, \.selectedBeta) { try await $0.setBeta(appid, $1) }) {
                 ForEach(d.betas, id: \.self) { b in
-                    Text(b.name == "public" ? t("AppProperties_Beta_Select_Default", "默认公开版本") : b.description.isEmpty ? b.name : "\(b.name) — \(b.description)").tag(b.name)
+                    Text(b.name == "public" ? t("AppProperties_Beta_Select_Default", String(localized: "默认公开版本")) : b.description.isEmpty ? b.name : "\(b.name) — \(b.description)").tag(b.name)
                 }
             }
             .labelsHidden().pickerStyle(.radioGroup)
             if d.hasPrivateBetas {
-                Text(t("AppProperties_Beta_Private", "私密版本") + "：需要开发者提供的访问代码。").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                Text(t("AppProperties_Beta_Private", String(localized: "私密版本")) + String(localized: "：需要开发者提供的访问代码。")).font(.system(size: 11)).foregroundStyle(Theme.tertiary)
             }
         }
     }

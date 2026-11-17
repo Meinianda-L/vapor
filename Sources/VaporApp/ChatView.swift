@@ -59,7 +59,7 @@ struct ChatView: View {
                     .foregroundStyle(Theme.secondary).frame(width: 24, height: 24).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("关闭聊天")
+            .help(String(localized: "关闭聊天"))
         }
         .padding(.horizontal, 24)
         .padding(.top, 40)
@@ -93,7 +93,7 @@ struct ChatView: View {
     private var conversation: some View {
         if let messages {
             if messages.isEmpty {
-                Text("还没有聊天记录").font(.system(size: 13)).foregroundStyle(Theme.tertiary)
+                Text(String(localized: "还没有聊天记录")).font(.system(size: 13)).foregroundStyle(Theme.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
@@ -110,7 +110,7 @@ struct ChatView: View {
                 }
             }
         } else {
-            Text(failed ? "读取聊天记录失败，稍后重试" : "正在读取…")
+            Text(failed ? String(localized: "读取聊天记录失败，稍后重试") : String(localized: "正在读取…"))
                 .font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -118,7 +118,7 @@ struct ChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField(engine.uiOnline ? "发消息" : "Windows Steam 未运行，暂时无法发送", text: $draft, axis: .vertical)
+            TextField(engine.uiOnline ? String(localized: "发消息") : String(localized: "Windows Steam 未运行，暂时无法发送"), text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.text)
@@ -134,7 +134,7 @@ struct ChatView: View {
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.surface))
                 .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Theme.hairline))
             if sendFailed {
-                Text("发送失败，消息仍保留在输入框里").font(.system(size: 11)).foregroundStyle(Theme.bad)
+                Text(String(localized: "发送失败，消息仍保留在输入框里")).font(.system(size: 11)).foregroundStyle(Theme.bad)
             }
         }
         .padding(.horizontal, 24)
@@ -191,7 +191,7 @@ struct ChatView: View {
         private static let dated: DateFormatter = {
             let f = DateFormatter()
             f.locale = Locale(identifier: "zh_CN")
-            f.dateFormat = "M月d日 HH:mm"
+            f.dateFormat = String(localized: "M月d日 HH:mm")
             return f
         }()
 
@@ -214,7 +214,7 @@ struct ChatView: View {
                             .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
                                 .fill(group.fromMe ? Theme.accent.opacity(0.16) : Theme.surface))
                         if line.message.failed {
-                            Text("发送失败").font(.system(size: 11)).foregroundStyle(Theme.bad)
+                            Text(String(localized: "发送失败")).font(.system(size: 11)).foregroundStyle(Theme.bad)
                         }
                     }
                 }
@@ -253,7 +253,7 @@ enum BBCode {
             case "emoticon":
                 out += AttributedString(":\(take(&rest, until: "[/emoticon]")):")
             case "img":
-                var s = AttributedString("[图片]")
+                var s = AttributedString(String(localized: "[图片]"))
                 s.link = url(take(&rest, until: "[/img]"))
                 out += s
             case "url":

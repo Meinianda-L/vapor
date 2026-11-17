@@ -26,9 +26,9 @@ enum LibrarySort: String, CaseIterable {
 
     var label: String {
         switch self {
-        case .name: return "名称"
-        case .recent: return "最近游玩"
-        case .playtime: return "游玩时长"
+        case .name: return String(localized: "名称")
+        case .recent: return String(localized: "最近游玩")
+        case .playtime: return String(localized: "游玩时长")
         }
     }
 }
@@ -95,17 +95,17 @@ struct LibraryContent: View {
                         .font(.system(size: 30, weight: .bold))
                         .kerning(-0.6)
                         .foregroundStyle(Theme.text)
-                    MetaLine(parts: ["\(games.filter(\.installed).count) 个已安装", "共 \(games.count) 个"])
+                    MetaLine(parts: ["\(games.filter(\.installed).count) 个已安装", String(localized: "共 \(games.count) 个")])
                 }
                 Spacer()
                 if loading { ProgressView().controlSize(.small) }
                 SortMenu(sort: $sort)
                 SearchField(text: $search)
             }
-            shelf("收藏夹", shelves.favorites)
+            shelf(String(localized: "收藏夹"), shelves.favorites)
             recentShelf
-            shelf("已安装", shelves.installed)
-            shelf("没有安装", shelves.other)
+            shelf(String(localized: "已安装"), shelves.installed)
+            shelf(String(localized: "没有安装"), shelves.other)
         }
         .onAppear(perform: rebuild)
         .onChange(of: games) { rebuild() }
@@ -138,7 +138,7 @@ struct LibraryContent: View {
     @ViewBuilder private var recentShelf: some View {
         if !shelves.recent.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
-                SectionLabel(text: "最近游玩")
+                SectionLabel(text: String(localized: "最近游玩"))
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 24) {
                         ForEach(shelves.recent) { game in
@@ -165,7 +165,7 @@ struct SortMenu: View {
             }
             .pickerStyle(.inline)
         } label: {
-            (Text(engine.strings("Library_SortCollectionBy") ?? "排序方式：").foregroundStyle(Theme.secondary)
+            (Text(engine.strings("Library_SortCollectionBy") ?? String(localized: "排序方式：")).foregroundStyle(Theme.secondary)
                 + Text(sort.label).foregroundStyle(Theme.text)
                 + Text(" \(Image(systemName: "chevron.up.chevron.down"))").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.tertiary))
                 .font(.system(size: 13))
@@ -186,7 +186,7 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
-            TextField("搜索", text: $text).textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.text)
+            TextField(String(localized: "搜索"), text: $text).textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.text)
         }
         .padding(.horizontal, 10)
         .frame(width: 210, height: 30)
@@ -263,7 +263,7 @@ struct GameTile: View {
 
     private var subtitle: String {
         if let p = engine.progress[game.appid], !p.isInstalled {
-            return p.total > 0 ? "下载中 \(Int(p.fraction * 100))%" : "排队中"
+            return p.total > 0 ? String(localized: "下载中 \(Int(p.fraction * 100))%") : String(localized: "排队中")
         }
         return platform
     }
@@ -272,7 +272,7 @@ struct GameTile: View {
         if let p = game.profile, let r = p.ladder.first {
             return "\(Theme.verdictLabel(p.verdict)) · \(Theme.rendererLabel(r.renderer))"
         }
-        if game.installed && game.hasMacBuild { return "Mac 原生" }
+        if game.installed && game.hasMacBuild { return String(localized: "Mac 原生") }
         return game.windowsOnly ? "Windows" : "Mac · Windows"
     }
 
@@ -280,10 +280,10 @@ struct GameTile: View {
         guard let app = engine.steamApps[game.appid] else { return nil }
         if sort == .recent {
             guard app.lastPlayed > 0 else { return nil }
-            return compact ? Self.ago(app.lastPlayed) : "上次游玩 \(Self.ago(app.lastPlayed))"
+            return compact ? Self.ago(app.lastPlayed) : String(localized: "上次游玩 \(Self.ago(app.lastPlayed))")
         }
         guard app.minutesPlayed > 0 else { return nil }
-        return app.minutesPlayed < 60 ? "\(app.minutesPlayed) 分钟" : String(format: "%.1f 小时", Double(app.minutesPlayed) / 60)
+        return app.minutesPlayed < 60 ? String(localized: "\(app.minutesPlayed) 分钟") : String(format: String(localized: "%.1f 小时"), Double(app.minutesPlayed) / 60)
     }
 
     /// Calendar days, so a game played last night reads "昨天" rather than "8 小时前".
@@ -291,12 +291,12 @@ struct GameTile: View {
         let cal = Calendar.current
         let from = cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(unix)))
         let c = cal.dateComponents([.year, .month, .day], from: from, to: cal.startOfDay(for: Date()))
-        if let y = c.year, y > 0 { return "\(y) 年前" }
-        if let m = c.month, m > 0 { return "\(m) 个月前" }
+        if let y = c.year, y > 0 { return String(localized: "\(y) 年前") }
+        if let m = c.month, m > 0 { return String(localized: "\(m) 个月前") }
         switch c.day ?? 0 {
-        case ..<1: return "今天"
-        case 1: return "昨天"
-        case let d: return "\(d) 天前"
+        case ..<1: return String(localized: "今天")
+        case 1: return String(localized: "昨天")
+        case let d: return String(localized: "\(d) 天前")
         }
     }
 }
