@@ -9,13 +9,13 @@ public enum HomeContent: Int, CaseIterable, Sendable, Hashable {
 
     public var title: String {
         switch self {
-        case .all: return "全部"
-        case .screenshots: return "截图"
-        case .artwork: return "艺术作品"
-        case .workshop: return "创意工坊"
-        case .guides: return "指南"
-        case .videos: return "视频"
-        case .broadcasts: return "实况直播"
+        case .all: return String(localized: "全部")
+        case .screenshots: return String(localized: "截图")
+        case .artwork: return String(localized: "艺术作品")
+        case .workshop: return String(localized: "创意工坊")
+        case .guides: return String(localized: "指南")
+        case .videos: return String(localized: "视频")
+        case .broadcasts: return String(localized: "实况直播")
         }
     }
 }
@@ -61,7 +61,7 @@ public enum CommunityHomeClient {
 
 public enum CommunityHomeParser {
     private static let kinds: [(String, HomeCard.Kind)] = [
-        ("截图", .screenshot), ("艺术作品", .artwork), ("创意工坊项目", .workshop), ("指南", .guide), ("视频", .video), ("实况直播", .broadcast),
+        (String(localized: "截图"), .screenshot), (String(localized: "艺术作品"), .artwork), (String(localized: "创意工坊项目"), .workshop), (String(localized: "指南"), .guide), (String(localized: "视频"), .video), (String(localized: "实况直播"), .broadcast),
     ]
 
     /// Cards of /apps/allcontenthome. The type line reads "<game>: <kind>", so the kind is its suffix.

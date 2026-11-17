@@ -238,7 +238,7 @@ public struct EngineDownloads: Sendable {
         progress(.extracting)
         let tar = try await ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/tar"), ["-xf", archive.path, "-C", staging.path])
         guard tar.status == 0 else {
-            throw WineSetupError.extractFailed(tar.output.split(whereSeparator: \.isNewline).first.map(String.init) ?? "tar 退出码 \(tar.status)")
+            throw WineSetupError.extractFailed(tar.output.split(whereSeparator: \.isNewline).first.map(String.init) ?? String(localized: "tar 退出码 \(tar.status)"))
         }
 
         progress(.validating)
@@ -393,7 +393,7 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unc
         if let error {
             c?.resume(throwing: EngineDownloads.mapTransport(error))
         } else {
-            c?.resume(with: done ?? .failure(WineSetupError.network("下载没有返回文件。")))
+            c?.resume(with: done ?? .failure(WineSetupError.network(String(localized: "下载没有返回文件。"))))
         }
     }
 }

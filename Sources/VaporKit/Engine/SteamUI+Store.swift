@@ -403,18 +403,18 @@ extension SteamUI {
     static func releaseText(_ r: [String: Any], date: Date?, comingSoon: Bool) -> String {
         if let custom = r["custom_release_date_message"] as? String, !custom.isEmpty { return custom }
         let mode = r["coming_soon_display"] as? String ?? ""
-        if mode == "text_tba" { return "待定" }
-        if mode == "text_comingsoon" { return "即将推出" }
-        guard let date else { return comingSoon ? "即将推出" : "" }
+        if mode == "text_tba" { return String(localized: "待定") }
+        if mode == "text_comingsoon" { return String(localized: "即将推出") }
+        guard let date else { return comingSoon ? String(localized: "即将推出") : "" }
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
         let c = cal.dateComponents([.year, .month, .day], from: date)
         let y = c.year ?? 0, m = c.month ?? 0, d = c.day ?? 0
         switch mode {
-        case "date_year": return "\(y) 年"
-        case "date_quarter": return "\(y) 年第 \((m - 1) / 3 + 1) 季度"
-        case "date_month": return "\(y) 年 \(m) 月"
-        default: return "\(y) 年 \(m) 月 \(d) 日"
+        case "date_year": return String(localized: "\(String(y)) 年")
+        case "date_quarter": return String(localized: "\(String(y)) 年第 \((m - 1) / 3 + 1) 季度")
+        case "date_month": return String(localized: "\(String(y)) 年 \(m) 月")
+        default: return String(localized: "\(String(y)) 年 \(m) 月 \(d) 日")
         }
     }
 
@@ -480,7 +480,7 @@ extension SteamUI {
         let final = int(d["final_price"]), original = int(d["original_price"])
         let discount = Int(int(d["discount_percent"]))
         let price: StorePrice? = d["original_price"] is NSNull || d["original_price"] == nil ? nil
-            : StorePrice(final: final == 0 ? "免费" : money(final), original: discount > 0 ? money(original) : "", discount: discount,
+            : StorePrice(final: final == 0 ? String(localized: "免费") : money(final), original: discount > 0 ? money(original) : "", discount: discount,
                          finalCents: final, packageID: nil, bundleID: nil, discountEnds: date(d["discount_expiration"]))
         let url = { (k: String) in (d[k] as? String).flatMap(URL.init(string:)) }
         return StoreItem(ref: .app(id), name: name, appid: id, isFree: price != nil && final == 0, comingSoon: false, releaseDate: nil,

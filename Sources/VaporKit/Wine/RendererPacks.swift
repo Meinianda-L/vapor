@@ -30,10 +30,10 @@ public struct RendererPack: Sendable, Hashable, Identifiable {
 
         public var displayName: String {
             switch self {
-            case .vapor: return "Vapor 下载"
+            case .vapor: return String(localized: "Vapor 下载")
             case .heroic: return "Heroic"
             case .gptk: return "Game Porting Toolkit"
-            case let .engine(name): return "\(name) 内置"
+            case let .engine(name): return String(localized: "\(name) 内置")
             }
         }
     }

@@ -200,8 +200,8 @@ public final class WindowsSteam: @unchecked Sendable {
         case timeout(Connection)
         public var description: String {
             switch self {
-            case .nativeSteamRunning: return "Mac 版 Steam 正在运行；同一账号同时在线会互相踢下线。"
-            case let .timeout(c): return "Windows Steam 没有在规定时间内登录（\(c)）。"
+            case .nativeSteamRunning: return String(localized: "Mac 版 Steam 正在运行；同一账号同时在线会互相踢下线。")
+            case let .timeout(c): return String(localized: "Windows Steam 没有在规定时间内登录（\(c)）。")
             }
         }
     }
@@ -451,8 +451,8 @@ public final class WindowsSteam: @unchecked Sendable {
         case unknownApp(UInt32), alreadyInstalled(UInt32)
         public var description: String {
             switch self {
-            case let .unknownApp(id): return "找不到 App \(id) 的安装信息。"
-            case let .alreadyInstalled(id): return "App \(id) 已经安装或已在队列中。"
+            case let .unknownApp(id): return String(localized: "找不到 App \(String(id)) 的安装信息。")
+            case let .alreadyInstalled(id): return String(localized: "App \(String(id)) 已经安装或已在队列中。")
             }
         }
     }

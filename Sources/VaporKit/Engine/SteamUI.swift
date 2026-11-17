@@ -19,11 +19,11 @@ public final class SteamUI: @unchecked Sendable {
         case badReply
         public var description: String {
             switch self {
-            case .unreachable: return "无法连接 Windows Steam 的界面进程。"
-            case .timeout: return "Windows Steam 的界面进程没有及时响应。"
-            case let .noTarget(t): return "Windows Steam 界面里没有 \(t)。"
-            case let .script(m): return "Steam 界面脚本出错：\(m)"
-            case .badReply: return "Steam 界面返回了无法识别的数据。"
+            case .unreachable: return String(localized: "无法连接 Windows Steam 的界面进程。")
+            case .timeout: return String(localized: "Windows Steam 的界面进程没有及时响应。")
+            case let .noTarget(t): return String(localized: "Windows Steam 界面里没有 \(t)。")
+            case let .script(m): return String(localized: "Steam 界面脚本出错：\(m)")
+            case .badReply: return String(localized: "Steam 界面返回了无法识别的数据。")
             }
         }
     }
@@ -224,7 +224,7 @@ public final class SteamUI: @unchecked Sendable {
             public let done: Int64
             public let total: Int64
         }
-        public static let stageNames = ["校验已安装文件", "分配磁盘", "下载", "整理文件", "校验暂存文件", "复制", "写入"]
+        public static let stageNames = ["校验已安装文件", String(localized: "分配磁盘"), String(localized: "下载"), String(localized: "整理文件"), String(localized: "校验暂存文件"), String(localized: "复制"), String(localized: "写入")]
     }
 
     public struct Sample: Decodable, Sendable, Equatable {

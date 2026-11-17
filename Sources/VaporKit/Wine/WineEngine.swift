@@ -77,11 +77,11 @@ public struct WineEngine: Sendable, Hashable, Identifiable {
             .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
 
         if source == .crossover {
-            unusableReason = "CrossOver 的 wine 依赖 CrossOver 自己的启动环境（bottle 管理和授权检查），单独调用无法运行 Windows Steam。"
+            unusableReason = String(localized: "CrossOver 的 wine 依赖 CrossOver 自己的启动环境（bottle 管理和授权检查），单独调用无法运行 Windows Steam。")
         } else if !hasWine {
-            unusableReason = "只有 bin/wine64（Wine 8 之前的布局），Vapor 需要 bin/wine。"
+            unusableReason = String(localized: "只有 bin/wine64（Wine 8 之前的布局），Vapor 需要 bin/wine。")
         } else if !fm.isExecutableFile(atPath: bin.appendingPathComponent("wineserver").path) {
-            unusableReason = "缺少 bin/wineserver。"
+            unusableReason = String(localized: "缺少 bin/wineserver。")
         } else {
             unusableReason = nil
         }

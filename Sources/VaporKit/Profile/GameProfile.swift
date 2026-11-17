@@ -189,7 +189,7 @@ public struct Profiler: Sendable {
             if rank.firstIndex(of: v)! > rank.firstIndex(of: verdict)! { verdict = v }
         }
         let kernel = unique(analysis.antiCheats.filter(\.kernelLevel).map(\.name) + (ac?.kernelLevelAntiCheats ?? []))
-        for name in kernel { raise(.blocked, "\(name) 是内核级反作弊，无法在 Wine 中运行") }
+        for name in kernel { raise(.blocked, String(localized: "\(name) 是内核级反作弊，无法在 Wine 中运行")) }
         // AreWeAntiCheatYet describes Linux/Proton, which ships EAC and BattlEye runtimes; macOS Wine
         // has neither, so whatever the status, online anti-cheat will not work here. Only a developer's
         // denial blocks the game, and only when there is no bootstrap to skip.
@@ -204,15 +204,15 @@ public struct Profiler: Sendable {
         let offline = launch?.bypassesAntiCheat ?? false
         if let ac, ac.status == "Denied", kernel.isEmpty {
             let denied = unique(ac.antiCheats.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
-            let what = denied.isEmpty ? "反作弊" : denied.joined(separator: "/")
-            raise(offline ? .needsTesting : .blocked, "开发者不允许 \(what) 在 Wine/Proton 下运行\(source)")
+            let what = denied.isEmpty ? String(localized: "反作弊") : denied.joined(separator: "/")
+            raise(offline ? .needsTesting : .blocked, String(localized: "开发者不允许 \(what) 在 Wine/Proton 下运行\(source)"))
         } else if !userMode.isEmpty {
-            raise(.needsTesting, "macOS Wine 没有 \(userMode.joined(separator: "/")) 的运行环境，无法联机\(source)")
+            raise(.needsTesting, String(localized: "macOS Wine 没有 \(userMode.joined(separator: ")/String(localized: ")) 的运行环境，无法联机\(source)"))
         }
         if let launch, offline {
-            raise(.needsTesting, "仅限离线：跳过反作弊，直接启动 \((launch.executable as NSString).lastPathComponent)")
+            raise(.needsTesting, String(localized: "仅限离线：跳过反作弊，直接启动 \((launch.executable as NSString).lastPathComponent)"))
         }
-        for l in analysis.thirdPartyLaunchers { raise(.needsLauncher, "需要 \(l)") }
+        for l in analysis.thirdPartyLaunchers { raise(.needsLauncher, String(localized: "需要 \(l)")) }
 
         return GameProfile(appid: appid,
                            name: meta?.name ?? fallbackName,

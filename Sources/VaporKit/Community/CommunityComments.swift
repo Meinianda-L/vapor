@@ -91,10 +91,10 @@ public enum CommentParsers {
 
     /// The answer of `comment/<type>/post/…`: nil when Steam took the comment, else its reason.
     public static func postError(json data: Data) -> String? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "Steam 没有正常回应。" }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return String(localized: "Steam 没有正常回应。") }
         if root["success"] as? Bool == true { return nil }
         let reason = (root["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        return reason ?? "Steam 没有接受这条留言。"
+        return reason ?? String(localized: "Steam 没有接受这条留言。")
     }
 }
 
@@ -121,7 +121,7 @@ public enum CommentClient {
             let kv = part.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             return kv.count == 2 && kv[0] == "sessionid" ? kv[1] : nil
         }.first
-        guard let session else { throw PostFailure(reason: "网页登录还没有就绪，请稍后再试。") }
+        guard let session else { throw PostFailure(reason: String(localized: "网页登录还没有就绪，请稍后再试。")) }
         var request = URLRequest(url: thread.postURL, timeoutInterval: 20)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
@@ -134,7 +134,7 @@ public enum CommentClient {
         if let extended = thread.extendedData { fields.append(("extended_data", extended)) }
         request.httpBody = Data(WebForm.encode(fields).utf8)
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw PostFailure(reason: "Steam 没有正常回应。") }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw PostFailure(reason: String(localized: "Steam 没有正常回应。")) }
         if let reason = CommentParsers.postError(json: data) { throw PostFailure(reason: reason) }
     }
 

@@ -81,23 +81,23 @@ public enum WineSetupError: Error, CustomStringConvertible, LocalizedError, Equa
 
     public var description: String {
         switch self {
-        case let .network(m): return "网络错误：\(m)"
-        case .rateLimited: return "GitHub 接口访问次数已达上限，请过一会儿再试。"
-        case let .httpStatus(code): return "下载失败（HTTP \(code)）。"
-        case .badReleaseData: return "无法解析 GitHub 返回的版本信息。"
-        case let .unknownAsset(name): return "找不到可下载的 \(name)。"
-        case let .checksumMismatch(name): return "\(name) 校验失败，文件可能不完整，请重新下载。"
+        case let .network(m): return String(localized: "网络错误：\(m)")
+        case .rateLimited: return String(localized: "GitHub 接口访问次数已达上限，请过一会儿再试。")
+        case let .httpStatus(code): return String(localized: "下载失败（HTTP \(code)）。")
+        case .badReleaseData: return String(localized: "无法解析 GitHub 返回的版本信息。")
+        case let .unknownAsset(name): return String(localized: "找不到可下载的 \(name)。")
+        case let .checksumMismatch(name): return String(localized: "\(name) 校验失败，文件可能不完整，请重新下载。")
         case let .notEnoughSpace(needed):
-            return "磁盘空间不足：需要约 \(ByteCountFormatter.string(fromByteCount: needed, countStyle: .file)) 的可用空间。"
-        case let .extractFailed(m): return "解压失败：\(m)"
-        case let .invalidEngine(name): return "\(name) 里没有找到 bin/wine，不是可用的 Wine 引擎。"
-        case let .invalidPack(kind, name): return "\(name) 不是有效的 \(kind.displayName) 渲染包。"
-        case let .engineUnusable(reason): return "这个引擎不能用于 Vapor：\(reason)"
-        case let .noPack(kind): return "没有找到 \(kind.displayName) 渲染包。"
-        case let .copyFailed(m): return "复制引擎失败：\(m)"
-        case let .processFailed(tool, code): return "\(tool) 运行失败（退出码 \(code)）。"
-        case let .timeout(what): return "\(what) 超时。"
-        case .steamNotInstalled: return "Steam 安装程序已结束，但没有找到 steam.exe。"
+            return String(localized: "磁盘空间不足：需要约 \(ByteCountFormatter.string(fromByteCount: needed, countStyle: .file)) 的可用空间。")
+        case let .extractFailed(m): return String(localized: "解压失败：\(m)")
+        case let .invalidEngine(name): return String(localized: "\(name) 里没有找到 bin/wine，不是可用的 Wine 引擎。")
+        case let .invalidPack(kind, name): return String(localized: "\(name) 不是有效的 \(kind.displayName) 渲染包。")
+        case let .engineUnusable(reason): return String(localized: "这个引擎不能用于 Vapor：\(reason)")
+        case let .noPack(kind): return String(localized: "没有找到 \(kind.displayName) 渲染包。")
+        case let .copyFailed(m): return String(localized: "复制引擎失败：\(m)")
+        case let .processFailed(tool, code): return String(localized: "\(tool) 运行失败（退出码 \(code)）。")
+        case let .timeout(what): return String(localized: "\(what) 超时。")
+        case .steamNotInstalled: return String(localized: "Steam 安装程序已结束，但没有找到 steam.exe。")
         }
     }
 

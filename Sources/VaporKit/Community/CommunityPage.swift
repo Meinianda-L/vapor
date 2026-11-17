@@ -6,12 +6,12 @@ public enum CommunityTab: String, CaseIterable, Sendable, Hashable {
 
     public var title: String {
         switch self {
-        case .all: return "全部"
-        case .discussions: return "讨论"
-        case .guides: return "指南"
-        case .workshop: return "创意工坊"
-        case .screenshots: return "截图"
-        case .artwork: return "艺术作品"
+        case .all: return String(localized: "全部")
+        case .discussions: return String(localized: "讨论")
+        case .guides: return String(localized: "指南")
+        case .workshop: return String(localized: "创意工坊")
+        case .screenshots: return String(localized: "截图")
+        case .artwork: return String(localized: "艺术作品")
         }
     }
 

@@ -54,10 +54,10 @@ public enum ProfileEditParsers {
 
     /// The saving endpoint's answer: nil when accepted, else the message Steam gives (HTML-free).
     public static func saveError(json data: Data) -> String? {
-        guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "Steam 没有正常回应。" }
+        guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return String(localized: "Steam 没有正常回应。") }
         if (o["success"] as? Int) == 1 || (o["success"] as? Bool) == true { return nil }
         let message = HTML.parse(o["errmsg"] as? String ?? "").plainText
-        return message.isEmpty ? "Steam 没有保存这些更改。" : message
+        return message.isEmpty ? String(localized: "Steam 没有保存这些更改。") : message
     }
 }
 
@@ -80,7 +80,7 @@ public enum ProfileEditClient {
             let kv = part.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             return kv.count == 2 && kv[0] == "sessionid" ? kv[1] : nil
         }.first
-        guard let session else { throw CommentClient.PostFailure(reason: "网页登录还没有就绪，请稍后再试。") }
+        guard let session else { throw CommentClient.PostFailure(reason: String(localized: "网页登录还没有就绪，请稍后再试。")) }
         var request = URLRequest(url: URL(string: "https://steamcommunity.com/profiles/\(steamID)/edit/")!, timeoutInterval: 20)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
@@ -98,7 +98,7 @@ public enum ProfileEditClient {
         for n in 1...3 { fields += [("weblink_\(n)_title", ""), ("weblink_\(n)_url", "")] }
         request.httpBody = Data(WebForm.encode(fields).utf8)
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw CommentClient.PostFailure(reason: "Steam 没有正常回应。") }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw CommentClient.PostFailure(reason: String(localized: "Steam 没有正常回应。")) }
         if let reason = ProfileEditParsers.saveError(json: data) { throw CommentClient.PostFailure(reason: reason) }
     }
 }

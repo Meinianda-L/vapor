@@ -41,7 +41,7 @@ public struct PrefixSetup: Sendable {
     func preflight() throws {
         let fm = FileManager.default
         guard fm.isExecutableFile(atPath: wine.path) else { throw WineSetupError.invalidEngine(engine.lastPathComponent) }
-        guard fm.isExecutableFile(atPath: wineserver.path) else { throw WineSetupError.engineUnusable("缺少 bin/wineserver。") }
+        guard fm.isExecutableFile(atPath: wineserver.path) else { throw WineSetupError.engineUnusable(String(localized: "缺少 bin/wineserver。")) }
     }
 
     /// Runs every step that is still missing and returns steam.exe. A prefix that already has Steam

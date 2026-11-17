@@ -65,8 +65,8 @@ public struct NativeWindow: Identifiable, Equatable, Sendable, Decodable {
     /// The quiet status line for a status window, e.g. "正在更新 Steam… 42%".
     public var statusLine: String {
         let what: String
-        if windowClass == "BootstrapUpdateUIClass" { what = "正在更新 Steam…" }
-        else if process == "wineboot.exe" { what = "正在更新 Wine 配置…" }
+        if windowClass == "BootstrapUpdateUIClass" { what = String(localized: "正在更新 Steam…") }
+        else if process == "wineboot.exe" { what = String(localized: "正在更新 Wine 配置…") }
         else { what = texts.first ?? (title.isEmpty ? "Steam" : title) }
         guard let f = progress?.fraction else { return what }
         return "\(what) \(Int((f * 100).rounded()))%"
