@@ -13,6 +13,7 @@ library, store, community, downloads, friends, sign-in. You never see a Wine win
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-111)](#requirements)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Package.swift)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-FF7A1A)](#status)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111)](LICENSE)
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -158,6 +159,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout of the code and how to sen
 | [`Boost`](Boost) | VaporBoost: Metal present hook for upscaling and frame interpolation. |
 | [`Bridge`](Bridge) | Experimental bridge from Windows games to the native macOS Steam client. |
 | [`Resources`](Resources) | App icon and the string catalog. |
+
+## License
+
+Vapor is released under the [MIT License](LICENSE). Wine, DXVK, DXMT, MoltenVK and the other components it downloads keep their own licenses.
 
 ## Acknowledgements
 

@@ -13,6 +13,7 @@ Vapor 在 Wine 里隐身运行真正的 Windows 版 Steam，再用原生 macOS �
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-111)](#系统要求)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Package.swift)
 [![状态：alpha](https://img.shields.io/badge/status-alpha-FF7A1A)](#当前状态)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111)](LICENSE)
 
 [English](README.md) · **简体中文**
 
@@ -154,6 +155,10 @@ Tools/l10n.sh           # 修改界面文字后刷新字符串目录
 | [`Boost`](Boost) | VaporBoost：用于超分和插帧的 Metal 呈现钩子。 |
 | [`Bridge`](Bridge) | 实验性：让 Windows 游戏直接连接 Mac 版 Steam 客户端的桥接。 |
 | [`Resources`](Resources) | 应用图标和字符串目录。 |
+
+## 许可证
+
+Vapor 以 [MIT 许可证](LICENSE) 发布。它下载的 Wine、DXVK、DXMT、MoltenVK 等组件各自沿用自己的许可证。
 
 ## 致谢
 
