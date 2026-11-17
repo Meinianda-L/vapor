@@ -15,6 +15,8 @@ shoot() {   # <language> <output dir>
     frame() { python3 Tools/frame_screenshot.py "$shots/$1" "$2/$3" "${4:-}"; }
     frame library.png "$2" hero.png
     frame detail.png "$2" game.png small
+    # The friends card on the game page shows other people's names and avatars.
+    python3 Tools/blur_region.py "$2/game.png" 1030 676 1342 812
     frame store.png "$2" store.png small
     frame community.png "$2" community.png small
     frame downloads.png "$2" downloads.png small

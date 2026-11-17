@@ -74,7 +74,7 @@ enum Snapshot {
         if online { ensureOnline() }
         var storeLoaded = false
         Task { await StoreData.shared.loadHome(state.engine); storeLoaded = true }
-        spin(45) { storeLoaded }
+        spin(45) { storeLoaded && !StoreData.shared.homeLoading }
         capture(state, to: dir.appendingPathComponent("store.png"))
         state.destination = .community
         capture(state, to: dir.appendingPathComponent("community.png"))

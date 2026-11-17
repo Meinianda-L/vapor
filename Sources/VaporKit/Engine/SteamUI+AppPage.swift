@@ -199,7 +199,7 @@ extension SteamUI {
         try await evaluate("\(Self.storeKit)\n\(Self.appPageKit)\nreturn await window.__vaporAppPage.\(call);")
     }
 
-    static let appPageKitVersion = 1
+    static let appPageKitVersion = 2
 
     static let appPageKit = #"""
     if (window.__vaporAppPage?.version !== \#(appPageKitVersion)) window.__vaporAppPage = (() => {
@@ -264,8 +264,10 @@ extension SteamUI {
           return { inGame, recent: [...others(r.in_game), ...others(r.played_recently)], ever: others(r.played_ever), wishlist: others(r.in_wishlist) };
         },
         async activity(appid, limit) {
+          // The first ask starts the client's fetch and hands back an empty record until it lands.
+          const loaded = x => x && ((x.appActivityByDay || []).length || x.m_bNoMoreHistoryAvailable);
           let a = appActivityStore.GetAppActivity(appid);
-          for (let i = 0; !a && i < 40; i++) { await sleep(250); a = appActivityStore.GetAppActivity(appid); }
+          for (let i = 0; !loaded(a) && i < 48; i++) { await sleep(250); a = appActivityStore.GetAppActivity(appid); }
           if (!a) return [];
           const me = self(), out = [];
           const kinds = { 2: 'achievement', 3: 'receivedGame', 10: 'review', 16: 'status', 30: 'firstPlayed', 1002: 'event' };
