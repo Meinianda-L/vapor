@@ -99,7 +99,7 @@ struct ChatView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 14) {
-                            ForEach(groups(messages)) { GroupView(group: $0, name: friend.name) }
+                            ForEach(groups(messages)) { GroupView(group: $0, name: friend.name, me: engine.account?.persona ?? "") }
                             Color.clear.frame(height: 1).id("end")
                         }
                         .padding(.horizontal, 24)
@@ -181,6 +181,8 @@ struct ChatView: View {
     private struct GroupView: View {
         let group: Group
         let name: String
+        /// The signed-in user's name, for their own /me lines.
+        let me: String
 
         private static let clock: DateFormatter = {
             let f = DateFormatter()
@@ -195,6 +197,19 @@ struct ChatView: View {
             return f
         }()
 
+        /// "/me waves" reads as "<name> waves", in italics.
+        private func blocks(_ m: SteamChatMarkup.Message, author: String) -> [RichBlock] {
+            guard m.isAction else { return m.blocks }
+            var out = m.blocks.map { b -> RichBlock in
+                guard case var .paragraph(spans) = b else { return b }
+                for i in spans.indices { spans[i].italic = true }
+                return .paragraph(spans)
+            }
+            let name = RichSpan(author + " ", bold: true, italic: true)
+            if case let .paragraph(spans)? = out.first { out[0] = .paragraph([name] + spans) } else { out.insert(.paragraph([name]), at: 0) }
+            return out
+        }
+
         private var stamp: String {
             let date = Date(timeIntervalSince1970: TimeInterval(group.time))
             return (Calendar.current.isDateInToday(date) ? Self.clock : Self.dated).string(from: date)
@@ -206,13 +221,15 @@ struct ChatView: View {
                     .padding(.bottom, 1)
                 ForEach(group.lines, id: \.id) { line in
                     VStack(alignment: group.fromMe ? .trailing : .leading, spacing: 2) {
-                        Text(BBCode.render(line.message.text))
-                            .font(.system(size: 13)).foregroundStyle(Theme.text)
+                        let message = SteamChatMarkup.parse(line.message.text)
+                        // Emoticon-only and /me lines stand on their own, as in Steam's chat.
+                        let plain = message.onlyEmoticons || message.isAction
+                        RichBlocksView(blocks: blocks(message, author: group.fromMe ? me : name), size: 13, maxImage: 320,
+                                       largeEmoticons: message.onlyEmoticons)
                             .tint(Theme.text)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, 11).padding(.vertical, 7)
+                            .padding(.horizontal, plain ? 2 : 11).padding(.vertical, plain ? 2 : 7)
                             .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(group.fromMe ? Theme.accent.opacity(0.16) : Theme.surface))
+                                .fill(plain ? Color.clear : group.fromMe ? Theme.accent.opacity(0.16) : Theme.surface))
                         if line.message.failed {
                             Text(String(localized: "发送失败")).font(.system(size: 11)).foregroundStyle(Theme.bad)
                         }
@@ -222,67 +239,5 @@ struct ChatView: View {
             .frame(maxWidth: .infinity, alignment: group.fromMe ? .trailing : .leading)
             .padding(group.fromMe ? .leading : .trailing, 60)
         }
-    }
-}
-
-/// The small part of Steam's chat BBCode that shows up in plain conversations.
-enum BBCode {
-    static func render(_ source: String) -> AttributedString {
-        var out = AttributedString()
-        var rest = Substring(source)
-        while let i = rest.firstIndex(where: { $0 == "[" || $0 == "\\" }) {
-            out += AttributedString(rest[..<i])
-            rest = rest[i...]
-            if rest.hasPrefix("\\[") {
-                out += AttributedString("[")
-                rest = rest.dropFirst(2)
-                continue
-            }
-            if rest.first == "\\" {
-                out += AttributedString("\\")
-                rest = rest.dropFirst()
-                continue
-            }
-            guard let close = rest.firstIndex(of: "]") else { break }
-            let tag = rest[rest.index(after: rest.startIndex)..<close]
-            rest = rest[rest.index(after: close)...]
-            let parts = tag.split(separator: "=", maxSplits: 1)
-            let name = parts.first.map { $0.lowercased() } ?? ""
-            let arg = parts.count > 1 ? String(parts[1]) : nil
-            switch name {
-            case "emoticon":
-                out += AttributedString(":\(take(&rest, until: "[/emoticon]")):")
-            case "img":
-                var s = AttributedString(String(localized: "[图片]"))
-                s.link = url(take(&rest, until: "[/img]"))
-                out += s
-            case "url":
-                let body = take(&rest, until: "[/url]")
-                var s = arg == nil ? AttributedString(body) : render(body)
-                s.link = url(arg ?? body)
-                s.underlineStyle = .single
-                out += s
-            default:
-                break   // closing and unknown tags (spoiler, b, i …) keep their content as plain text
-            }
-        }
-        out += AttributedString(rest)
-        return out
-    }
-
-    private static func take(_ rest: inout Substring, until close: String) -> String {
-        guard let r = rest.range(of: close, options: .caseInsensitive) else {
-            defer { rest = "" }
-            return String(rest)
-        }
-        defer { rest = rest[r.upperBound...] }
-        return String(rest[..<r.lowerBound])
-    }
-
-    /// Only web links are made clickable.
-    private static func url(_ s: String) -> URL? {
-        guard let u = URL(string: s.trimmingCharacters(in: .whitespaces)),
-              let scheme = u.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
-        return u
     }
 }

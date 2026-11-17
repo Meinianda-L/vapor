@@ -97,10 +97,15 @@ public enum SteamChatMarkup {
             return nil
         }
         var attrs: [String: String] = [:]
-        let pattern = /([A-Za-z_]+)=(?:"([^"]*)"|(\S+))/
-        for m in rest.matches(of: pattern) { attrs[String(m.1).lowercased()] = String(m.2 ?? m.3 ?? "") }
+        let source = String(rest), ns = source as NSString
+        for m in attrPattern.matches(in: source, range: NSRange(location: 0, length: ns.length)) {
+            let value = m.range(at: 2).location != NSNotFound ? m.range(at: 2) : m.range(at: 3)
+            attrs[ns.substring(with: m.range(at: 1)).lowercased()] = ns.substring(with: value)
+        }
         return .open(name: name, arg: arg, attrs: attrs)
     }
+
+    private static let attrPattern = try! NSRegularExpression(pattern: #"([A-Za-z_]+)=(?:"([^"]*)"|(\S+))"#)
 
     // MARK: - Building
 
@@ -136,8 +141,9 @@ public enum SteamChatMarkup {
             runs = []
         }
 
-        /// Text up to the matching close tag, as raw source for blocks that are not inline.
+        /// The tokens up to the matching close tag; a tag that is never closed has no body.
         static func inner(_ tokens: [Token], from i: inout Int, until name: String) -> [Token] {
+            let start = i
             var depth = 0, out: [Token] = []
             while i < tokens.count {
                 let t = tokens[i]; i += 1
@@ -145,7 +151,8 @@ public enum SteamChatMarkup {
                 if case .close(name) = t { if depth == 0 { return out }; depth -= 1 }
                 out.append(t)
             }
-            return out
+            i = start
+            return []
         }
 
         static func plain(_ tokens: [Token]) -> String {

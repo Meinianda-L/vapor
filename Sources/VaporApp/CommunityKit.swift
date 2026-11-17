@@ -276,7 +276,12 @@ struct RichBlocksView: View {
     let blocks: [RichBlock]
     var size: CGFloat = 14
     var maxImage: CGFloat = 680
+    /// Emoticons at Steam's large size (a chat message that is nothing but emoticons).
+    var largeEmoticons = false
     @Environment(\.openURL) private var openURL
+    @ObservedObject private var emoticons = Emoticons.shared
+    /// Spoilers stay hidden until the reader clicks them.
+    @State private var revealed = false
 
     private enum Item { case block(RichBlock), images([URL]) }
 
@@ -308,9 +313,15 @@ struct RichBlocksView: View {
         }
     }
 
-    static func attributed(_ spans: [RichSpan], size: CGFloat) -> AttributedString {
-        var out = AttributedString()
-        for s in spans {
+    /// The spans as one Text: emoticons inline as images once loaded, spoilers as a covered bar until revealed.
+    private func text(_ spans: [RichSpan]) -> Text {
+        spans.reduce(Text(verbatim: "")) { out, s in
+            if let name = s.emoticon {
+                let side = largeEmoticons ? size * 2.6 : size * 1.3
+                guard let image = emoticons.image(name, large: largeEmoticons) else { return out + Text(verbatim: s.text) }
+                image.size = NSSize(width: side, height: side)
+                return out + Text(Image(nsImage: image)).baselineOffset(largeEmoticons ? 0 : -size * 0.22)
+            }
             var a = AttributedString(s.text)
             var font = Font.system(size: s.code ? size - 1 : size, weight: s.bold ? .semibold : .regular, design: s.code ? .monospaced : .default)
             if s.italic { font = font.italic() }
@@ -318,16 +329,20 @@ struct RichBlocksView: View {
             if s.underline { a.underlineStyle = .single }
             if s.strike { a.strikethroughStyle = .single }
             if let link = s.link { a.link = link; a.foregroundColor = Theme.accent }
-            out += a
+            if s.spoiler && !revealed { a.foregroundColor = .clear; a.backgroundColor = Theme.secondary.opacity(0.45); a.link = nil }
+            return out + Text(a)
         }
-        return out
     }
+
+    private func hasSpoiler(_ spans: [RichSpan]) -> Bool { spans.contains(where: \.spoiler) }
 
     @ViewBuilder private func render(_ block: RichBlock) -> some View {
         switch block {
         case .paragraph(let spans):
-            Text(Self.attributed(spans, size: size)).foregroundStyle(Theme.text.opacity(0.88)).lineSpacing(4)
+            text(spans).foregroundStyle(Theme.text.opacity(0.88)).lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                .onTapGesture { if hasSpoiler(spans) { revealed.toggle() } }
+                .help(hasSpoiler(spans) && !revealed ? String(localized: "点击显示剧透内容") : "")
         case .heading(let t, let level):
             Text(t).font(.system(size: level == 1 ? 18 : level == 2 ? 15.5 : 14, weight: .semibold)).foregroundStyle(Theme.text)
                 .padding(.top, 8).textSelection(.enabled)
@@ -336,7 +351,7 @@ struct RichBlocksView: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { n, spans in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(ordered ? "\(n + 1)." : "•").font(.system(size: size)).foregroundStyle(Theme.secondary).frame(width: 20, alignment: .trailing)
-                        Text(Self.attributed(spans, size: size)).foregroundStyle(Theme.text.opacity(0.88)).lineSpacing(4)
+                        text(spans).foregroundStyle(Theme.text.opacity(0.88)).lineSpacing(4)
                             .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     }
                 }
@@ -365,6 +380,8 @@ struct RichBlocksView: View {
             Divider().overlay(Theme.hairline)
         case .image(let u):
             CommunityPicture(url: u, maxWidth: maxImage)
+        case .sticker(let type):
+            if let url = Emoticons.stickerURL(type) { CommunityPicture(url: url, maxWidth: 128) }
         }
     }
 }
@@ -373,4 +390,38 @@ struct RichBlocksView: View {
 enum CommunityDetail: Hashable {
     case thread(URL)
     case file(UInt64)
+}
+
+/// Steam's emoticon images, loaded once per name and size and shared by every message that shows them.
+@MainActor
+final class Emoticons: ObservableObject {
+    static let shared = Emoticons()
+    private var images: [String: NSImage] = [:]
+    private var loading: Set<String> = []
+
+    private static let base = "https://community.akamai.steamstatic.com/economy/"
+
+    static func stickerURL(_ type: String) -> URL? {
+        type.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed).flatMap { URL(string: base + "sticker/" + $0) }
+    }
+
+    /// The image if it is loaded; otherwise starts the load and returns nil (the caller shows ":name:").
+    func image(_ name: String, large: Bool) -> NSImage? {
+        let key = (large ? "emoticonlarge/" : "emoticon/") + name
+        if let image = images[key] { return image.copy() as? NSImage }
+        guard !loading.contains(key), let path = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: Self.base + path) else { return nil }
+        loading.insert(key)
+        Task {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 20
+            if let (data, response) = try? await URLSession.shared.data(for: request),
+               (response as? HTTPURLResponse)?.statusCode == 200, let image = NSImage(data: data) {
+                images[key] = image
+            }
+            loading.remove(key)
+            objectWillChange.send()
+        }
+        return nil
+    }
 }
