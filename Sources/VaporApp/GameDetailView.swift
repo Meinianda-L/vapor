@@ -70,6 +70,38 @@ struct Hero: View {
     }
 }
 
+/// What a launch is doing besides running the game (cloud sync, install scripts), in Steam's words.
+struct LaunchStageLine: View {
+    let appid: UInt32
+    @EnvironmentObject var engine: EngineModel
+
+    var body: some View {
+        if let stage = engine.launchStage[appid] {
+            Text(stage).font(.system(size: 11.5)).foregroundStyle(Theme.secondary).lineLimit(1)
+        }
+    }
+}
+
+/// Lets Steam itself start the game (its cloud sync, install scripts and playtime), where the renderer allows it.
+struct SteamLaunchToggle: View {
+    let game: GameItem
+    @EnvironmentObject var engine: EngineModel
+
+    var body: some View {
+        let on = engine.steamLaunched.contains(game.appid)
+        let blocker = engine.steamLaunchBlocker(game)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("由 Steam 启动（实验性）", isOn: Binding(get: { on }, set: { engine.setSteamLaunch($0, for: game.appid) }))
+                .toggleStyle(.checkbox)
+                .font(.system(size: 12.5))
+            Text(on && blocker != nil ? "\(blocker ?? "")仍由 Vapor 启动。"
+                 : "云存档、首次运行的安装脚本和游戏时间都交给 Steam。图形后端改用按程序的 DLL 覆盖，目前只支持 DXVK 和 WineD3D。")
+                .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 struct BackButton: View {
     let action: () -> Void
     @State private var hovering = false
@@ -115,6 +147,7 @@ struct ActionArea: View {
                                    title: engine.busy && engine.lastLaunch == game.name ? "启动中…" : (engine.strings("GameAction_Play") ?? "开始游戏")) { engine.play(game) }
                     }
                 }
+                LaunchStageLine(appid: game.appid)
             } else if game.installed && !game.windowsOnly {
                 // Mac Steam runs its own installs; signing it in takes the account from Windows Steam.
                 PlayButton(enabled: true, installed: true) {
@@ -231,6 +264,7 @@ struct DetailBody: View {
                         Text("点一项，作为这个游戏启动时使用的图形后端。默认用第一项。")
                             .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
                     }
+                    if game.installKind == .wine { SteamLaunchToggle(game: game) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 

@@ -25,6 +25,7 @@ struct GamePageSections: View {
             if let line = creditLine { Text(line).font(.system(size: 12)).foregroundStyle(Theme.secondary) }
         }
         .task(id: engine.uiOnline ? appid : nil) { await load() }
+        .task(id: engine.uiOnline ? appid : nil) { await engine.loadCloudState(appid) }
     }
 
     // MARK: stats
@@ -38,7 +39,9 @@ struct GamePageSections: View {
         if last > 0 { out.append((t("AppDetails_SectionTitle_LastPlayed", "最后运行日期"), Self.relative(Date(timeIntervalSince1970: TimeInterval(last))))) }
         if let a = achievementCount, a.total > 0 { out.append((t("AppDetails_SectionTitle_Achievements", "成就"), "\(a.done) / \(a.total)")) }
         if let d = details, d.cloudAvailable, d.cloudEnabledForAccount {
-            let state = d.cloudEnabled ? "已启用" : t("AppDetails_CloudStatus_Disabled", "已禁用")
+            // Steam's live sync status once read (已是最新, 正在上传…), else just whether it is on.
+            let live = engine.cloudStates[appid].flatMap { $0.inUse ? engine.cloudLabel($0) : nil }
+            let state = d.cloudEnabled ? live ?? "已启用" : t("AppDetails_CloudStatus_Disabled", "已禁用")
             out.append((t("AppDetails_SectionTitle_CloudStatus", "云存储状态"), d.cloudEnabled && !d.cloudUsed.isEmpty && !d.cloudUsed.hasPrefix("0 ") ? "\(state) · 已用 \(d.cloudUsed)" : state))
         }
         return out

@@ -108,15 +108,15 @@ final class EngineModel: ObservableObject {
     }
 
     var statusText: String {
-        guard steam != nil else { return "未找到 Windows Steam" }
+        guard steam != nil else { return String(localized: "未找到 Windows Steam") }
         if let status = nativeStatus { return status }
-        if stopping { return strings("Steam_Shutdown_Generic") ?? "正在关闭 Steam…" }
+        if stopping { return strings("Steam_Shutdown_Generic") ?? String(localized: "正在关闭 Steam…") }
         switch connection {
-        case .stopped: return "Windows Steam 未运行"
-        case .starting: return "Windows Steam 连接中"
-        case .loggedOn: return "Windows Steam 在线"
-        case let .loggedOff(reason): return "Windows Steam 已登出（\(reason)）"
-        case .needsLogin: return "Windows Steam 需要登录"
+        case .stopped: return String(localized: "Windows Steam 未运行")
+        case .starting: return String(localized: "Windows Steam 连接中")
+        case .loggedOn: return String(localized: "Windows Steam 在线")
+        case let .loggedOff(reason): return String(localized: "Windows Steam 已登出（\(reason)）")
+        case .needsLogin: return String(localized: "Windows Steam 需要登录")
         }
     }
 
@@ -222,10 +222,10 @@ final class EngineModel: ObservableObject {
         lastReported = key
         let name = steamApps[run.appid]?.name ?? "App \(run.appid)"
         if run.problem == "disk" {
-            alert = .message("\(name) 需要 \(bytes(run.required))，磁盘只剩 \(bytes(run.available))。")
+            alert = .message(String(localized: "\(name) 需要 \(bytes(run.required))，磁盘只剩 \(bytes(run.available))。"))
         } else if run.done && run.state == 15 {
-            let reason = run.error != 0 ? strings.appUpdateError(run.error) ?? "错误 \(run.error)" : "未知原因"
-            alert = .message(run.problem == "uninstall" ? "无法卸载 \(name)：\(reason)" : "无法安装 \(name)：\(reason)")
+            let reason = run.error != 0 ? strings.appUpdateError(run.error) ?? String(localized: "错误 \(run.error)") : String(localized: "未知原因")
+            alert = .message(run.problem == "uninstall" ? String(localized: "无法卸载 \(name)：\(reason)") : String(localized: "无法安装 \(name)：\(reason)"))
         }
     }
 
@@ -248,13 +248,19 @@ final class EngineModel: ObservableObject {
     }
 
     private func showNextDialog() {
-        let next = steamDialogs.first { !answeredDialogs.contains($0.id) }
+        let next = questions.first?.dialog ?? steamDialogs.first { !answeredDialogs.contains($0.id) }
         if next != steamDialog { steamDialog = next }
     }
 
     /// Answers `steamDialog` with one of its button ids, or `SteamUI.Dialog.dismiss` (what closing Steam's window does).
     func answerDialog(_ choice: String, remember: Bool = false) {
         guard let dialog = steamDialog else { return }
+        if let i = questions.firstIndex(where: { $0.dialog.id == dialog.id }) {
+            let answer = questions.remove(at: i).answer
+            showNextDialog()
+            answer(choice)
+            return
+        }
         answeredDialogs.insert(dialog.id)
         showNextDialog()
         uiAction(requiresLogin: false) { try await $0.answerDialog(dialog.id, choice, remember: remember) }
@@ -414,9 +420,9 @@ final class EngineModel: ObservableObject {
     /// Why Windows Steam cannot move to another engine right now, or nil when it can. Games share
     /// Steam's wineserver, and a restart pauses downloads.
     var engineSwitchBlocker: String? {
-        if !running.isEmpty { return "游戏运行时不能切换引擎。" }
-        if downloading { return "正在下载，下载完成或暂停后再切换。" }
-        if busy || stopping { return "Windows Steam 正忙，稍后再试。" }
+        if !running.isEmpty { return String(localized: "游戏运行时不能切换引擎。") }
+        if downloading { return String(localized: "正在下载，下载完成或暂停后再切换。") }
+        if busy || stopping { return String(localized: "Windows Steam 正忙，稍后再试。") }
         return nil
     }
 
@@ -479,7 +485,7 @@ final class EngineModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     waited += 1
                 }
-                if await Self.probeNativeSteam() { alert = .message("Mac 版 Steam 没有退出，Windows Steam 无法重新上线。"); return }
+                if await Self.probeNativeSteam() { alert = .message(String(localized: "Mac 版 Steam 没有退出，Windows Steam 无法重新上线。")); return }
             }
             _ = try? await ui.evaluate("SteamClient.User.Reconnect(); return true;")
             for _ in 0..<20 {
@@ -539,7 +545,7 @@ final class EngineModel: ObservableObject {
     }
 
     private static func notLoggedOn(_ showsLogin: Bool, _ consequence: String) -> String {
-        showsLogin ? "请在 Steam 窗口中登录，然后再试一次。" : "Windows Steam 没有登录成功，\(consequence)。"
+        showsLogin ? String(localized: "请在 Steam 窗口中登录，然后再试一次。") : String(localized: "Windows Steam 没有登录成功，\(consequence)。")
     }
 
     private func waitForUI(timeout: TimeInterval = 60) async throws {
@@ -644,7 +650,7 @@ final class EngineModel: ObservableObject {
 
     /// Runs a Steam UI call; `requiresLogin: false` for the sign-in itself, which runs while signed out.
     func uiAction(requiresLogin: Bool = true, _ body: @escaping (SteamUI) async throws -> Void) {
-        guard requiresLogin ? uiOnline : (uiOnline || uiReachable) else { alert = .message("Windows Steam 未运行。"); return }
+        guard requiresLogin ? uiOnline : (uiOnline || uiReachable) else { alert = .message(String(localized: "Windows Steam 未运行。")); return }
         Task {
             do { try await body(ui) } catch { alert = .message("\(error)") }
             refresh()
@@ -659,11 +665,14 @@ final class EngineModel: ObservableObject {
         EngineVariants.directory(for: renderer, base: base)
     }
 
-    /// Ensures Steam is online, then runs the game with its first ladder rung.
+    /// Ensures Steam is online, then runs the game with its chosen ladder rung: by Steam itself when the user turned
+    /// that on and the renderer allows it, else by Vapor on the renderer's engine with Steam's cloud sync and install
+    /// scripts run around it.
     func play(_ game: GameItem) {
         guard let steam, !stopping, !running.contains(game.appid), let profile = game.profile, let dir = game.installDir else { return }
         let rung = chosenRung(game.appid, in: profile)
-        guard let plan = profile.plan(for: rung) else { alert = .message("找不到游戏程序。"); return }
+        guard let plan = profile.plan(for: rung) else { alert = .message(String(localized: "找不到游戏程序。")); return }
+        let viaSteam = steamLaunched.contains(game.appid) && steamLaunchBlocker(game) == nil
         let exe = plan.executable
         let workingDirectory = plan.workingDirectoryURL(in: dir)
         var env = profile.settings.env
@@ -673,38 +682,50 @@ final class EngineModel: ObservableObject {
         if !profile.settings.useMsync { env["WINEMSYNC"] = "0" }
         let args = plan.arguments + (rung?.arguments ?? []) + profile.settings.extraArguments
         let variant = rung.flatMap { Self.variantDir(for: $0.renderer) }
-        let appid = game.appid
+        let appid = game.appid, name = game.name
         running.insert(appid)
-        lastLaunch = game.name
+        lastLaunch = name
         operations += 1
         Task {
             defer {
                 operations -= 1
-                if lastLaunch == game.name { lastLaunch = nil }
+                if lastLaunch == name { lastLaunch = nil }
+                launchStage[appid] = nil
             }
             do {
                 let (state, showsLogin) = try await online(steam)
                 guard case .loggedOn = state else {
                     running.remove(appid)
-                    alert = .message(Self.notLoggedOn(showsLogin, "未启动游戏"))
+                    alert = .message(Self.notLoggedOn(showsLogin, String(localized: "未启动游戏")))
+                    return
+                }
+                if viaSteam {
+                    try await launchThroughSteam(steam, game: game, profile: profile, rung: rung, plan: plan, dir: dir)
                     return
                 }
                 // The launch options set in Steam's Properties apply to Vapor's launch as well.
                 var args = args
                 if let opts = await launchOptions(appid) { args += AppMetadata.commandLineArguments(opts) }
+                // Stopped while the cloud sync or an install script ran: nothing to start.
+                guard await prepareDirectLaunch(steam, appid: appid, name: name, installDir: dir), running.contains(appid) else {
+                    running.remove(appid)
+                    return
+                }
                 let finalArgs = args
                 let process = try await Task.detached {
                     try steam.launch(appid: appid, installDir: dir, executable: exe, arguments: finalArgs,
                                      workingDirectory: workingDirectory, engineVariant: variant, extraEnv: env)
                 }.value
                 // wine runs the exe in this process: it ends with the game (or early, when a launcher hands off).
-                let started = Date(), renderer = rung.map { Theme.rendererLabel($0.renderer) } ?? "当前后端", name = game.name
+                let started = Date(), renderer = rung.map { Theme.rendererLabel($0.renderer) } ?? String(localized: "当前后端")
                 process.terminationHandler = { [weak self] p in
                     let quick = Date().timeIntervalSince(started) < 15 && p.terminationStatus != 0
                     Task { @MainActor in
-                        self?.running.remove(appid); self?.gameProcesses[appid] = nil
+                        guard let self else { return }
+                        self.running.remove(appid); self.gameProcesses[appid] = nil
                         // A start-up crash is almost always the renderer; say which one and where to change it.
-                        if quick { self?.alert = .message("\(name) 在 \(renderer) 下启动后很快退出了。可以在游戏详情页的“候选后端”里换一个再试。") }
+                        if quick { self.alert = .message(String(localized: "\(name) 在 \(renderer) 下启动后很快退出了。可以在游戏详情页的“候选后端”里换一个再试。")) }
+                        await self.afterGame(appid, name: name)
                     }
                 }
                 if process.isRunning { gameProcesses[appid] = process } else { running.remove(appid) }
@@ -716,7 +737,190 @@ final class EngineModel: ObservableObject {
         }
     }
 
+    // MARK: Steam's launch pipeline
+
+    /// Steam's words for what a launch is doing besides running the game (cloud sync, install scripts), for the line
+    /// under the play button.
+    @Published private(set) var launchStage: [UInt32: String] = [:]
+    /// Each game's Steam Cloud state as last read, for the detail page's 云状态 line.
+    @Published private(set) var cloudStates: [UInt32: SteamUI.CloudState] = [:]
+    /// Games the user lets Steam start (experimental, off by default).
+    @Published private(set) var steamLaunched: Set<UInt32> = Set((UserDefaults.standard.array(forKey: "steamLaunch") as? [Int] ?? [])
+        .compactMap { UInt32(exactly: $0) })
+    /// Running games Steam started; stopping one goes through Steam.
+    private var steamStarted: Set<UInt32> = []
+    /// Vapor's own questions (cloud conflict, install script failure), shown ahead of Steam's.
+    private var questions: [(dialog: SteamUI.Dialog, answer: (String) -> Void)] = []
+
+    func setSteamLaunch(_ on: Bool, for appid: UInt32) {
+        if on { steamLaunched.insert(appid) } else { steamLaunched.remove(appid) }
+        UserDefaults.standard.set(steamLaunched.map(Int.init).sorted(), forKey: "steamLaunch")
+    }
+
+    /// Why Steam cannot start the game with its chosen renderer, or nil when it can.
+    func steamLaunchBlocker(_ game: GameItem) -> String? {
+        guard let profile = game.profile else { return String(localized: "还没有分析这个游戏。") }
+        let rung = chosenRung(game.appid, in: profile)
+        if SteamLaunchRenderer.modules(for: rung?.renderer ?? .wined3d) == nil {
+            return String(localized: "\(Theme.rendererLabel(rung?.renderer ?? .wined3d)) 需要自己的 Wine 引擎，只能由 Vapor 启动。")
+        }
+        if rung?.launch != nil { return String(localized: "这个后端用另一个启动项，Steam 只会运行默认启动项。") }
+        if profile.plan(for: rung)?.bypassesAntiCheat == true { return String(localized: "Steam 会运行反作弊启动器，它在 macOS 上无法工作。") }
+        return nil
+    }
+
+    /// Steam's launch, with the renderer's DLLs and per-program overrides set up for Steam's engine first.
+    private func launchThroughSteam(_ steam: WindowsSteam, game: GameItem, profile: GameProfile, rung: LadderRung?,
+                                    plan: LaunchPlan, dir: URL) async throws {
+        let renderer = rung?.renderer ?? .wined3d
+        var exes = [plan.executableURL(in: dir)]
+        if let entry = profile.metadata?.windowsLaunch { exes.append(LaunchPlan.resolving(entry, in: dir).executableURL(in: dir)) }
+        try await steam.prepareSteamLaunch(appid: game.appid, renderer: renderer, variant: Self.variantDir(for: renderer),
+                                           executables: exes, is32Bit: profile.analysis.is32Bit)
+        try await ui.runGame(game.appid)
+        steamStarted.insert(game.appid)
+        Task { await watchSteamGame(game.appid) }
+    }
+
+    /// Keeps `running` in step with Steam's list until the game Steam started has exited.
+    private func watchSteamGame(_ appid: UInt32) async {
+        let ui = self.ui, start = Date()
+        var seen = false
+        defer { running.remove(appid); steamStarted.remove(appid) }
+        while true {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let apps = try? await ui.runningApps() else {
+                if !uiOnline { return }
+                continue
+            }
+            if apps.contains(appid) { seen = true; continue }
+            if seen { return }
+            // Not up yet: Steam may still be syncing or installing (that shows in `launches`); a dropped launch ends here.
+            if launches.contains(where: { $0.appid == appid }) { continue }
+            if Date().timeIntervalSince(start) > 30 { return }
+        }
+    }
+
+    /// What Steam's launch does before CreatingProcess, for a game Vapor starts: the cloud download (with Steam's
+    /// questions on a conflict or failure) and the install scripts. Returns whether to go on.
+    private func prepareDirectLaunch(_ steam: WindowsSteam, appid: UInt32, name: String, installDir: URL) async -> Bool {
+        if uiOnline {
+            launchStage[appid] = strings("LaunchApp_Action_SynchronizingCloud") ?? String(localized: "正在同步云")
+            guard await syncCloud(appid, name: name, phase: .beforeLaunch) else { return false }
+        }
+        let scripts = await Task.detached(priority: .userInitiated) { steam.installScripts(for: appid, installDir: installDir) }.value
+        if !scripts.isEmpty {
+            launchStage[appid] = strings("LaunchApp_Action_RunningInstallScript_NoParens") ?? String(localized: "正在运行安装脚本…")
+            let failed = await steam.runInstallScripts(scripts) { entry in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.launchStage[appid] = self.strings("LaunchApp_Action_RunningInstallScript", entry) ?? String(localized: "正在运行安装脚本（\(entry)）")
+                }
+            }
+            if !failed.isEmpty {
+                let answer = await ask(.init(vapor: "confirm", appid: appid,
+                    title: .init(key: "LaunchApp_InstallScript_Failed_Title", String(localized: "安装失败")),
+                    message: [.init(key: nil, String(localized: "\(failed.joined(separator: "、")) 没有装好。继续的话，\(name) 可能无法正常运行。"))],
+                    buttons: [.init("continue", .init(key: "LaunchApp_InstallScript_Failed_Continue", String(localized: "仍然继续")), role: "default"),
+                              .init("cancel", .init(key: "CloudSyncFailed_AppLaunch_Cancel", String(localized: "取消")), role: "cancel")]))
+                guard answer == "continue" else { return false }
+            }
+        }
+        // A Steam launch left per-program overrides that would replace this engine's renderer.
+        if WindowsSteam.hasSteamLaunchSetup(appid) { await steam.undoSteamLaunch(appid) }
+        return true
+    }
+
+    /// Steam's exit step for a game Vapor started: the cloud upload, once Steam no longer counts the game as running
+    /// (a launcher that handed off ends before the game does).
+    private func afterGame(_ appid: UInt32, name: String) async {
+        guard uiOnline else { return }
+        let ui = self.ui
+        while (try? await ui.runningApps())?.contains(appid) == true, gameProcesses[appid] == nil {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
+        guard gameProcesses[appid] == nil else { return }
+        launchStage[appid] = strings("LaunchApp_Action_SynchronizingCloud") ?? String(localized: "正在同步云")
+        _ = await syncCloud(appid, name: name, phase: .afterExit)
+        if gameProcesses[appid] == nil { launchStage[appid] = nil }
+    }
+
+    /// One cloud sync with Steam's questions. Returns whether a launch may go on.
+    private func syncCloud(_ appid: UInt32, name: String, phase: CloudSyncPlan.Phase) async -> Bool {
+        let ui = self.ui
+        for _ in 0..<2 {
+            let result = await ui.syncCloud(appid, phase: phase, timeout: phase == .beforeLaunch ? 120 : 300) { state in
+                Task { @MainActor [weak self] in self?.showCloud(appid, state) }
+            }
+            let launching = phase == .beforeLaunch
+            switch result {
+            case .notUsed, .synchronized:
+                return true
+            case .pendingElsewhere:
+                guard launching else { return true }
+                return await ask(.init(vapor: "cloudPending", appid: appid, title: .init(key: "CloudPendingOps_Header", String(localized: "云过期")),
+                    message: [.init(key: "CloudPendingOps_Description", String(localized: "您仍然可以进行此游戏，但这样可能会在您之前的游戏进度成功上传时造成冲突。"))],
+                    buttons: [.init("IgnorePendingCloudSessions", .init(key: "CloudPendingOps_Continue", String(localized: "仍然进行游戏")), role: "destructive"),
+                              .init("cancel", .init(key: "CloudPendingOps_Cancel", String(localized: "取消")), role: "cancel")])) == "IgnorePendingCloudSessions"
+            case .failed, .timedOut:
+                guard launching else {
+                    alert = .message((strings("Notification_CloudSyncFailure_Title") ?? String(localized: "云错误")) + String(localized: "：\(name) 的存档没有同步到 Steam 云。"))
+                    return false
+                }
+                return await ask(.init(vapor: "cloudSyncFailed", appid: appid, title: .init(key: "CloudSyncFailed_AppLaunch_Header", String(localized: "无法同步")),
+                    message: [.init(key: "CloudSyncFailed_AppLaunch_Warning", String(localized: "警告：Steam 未能将您的 \(name) 存档与 Steam 云同步。"), name),
+                              .init(key: "CloudSyncFailed_AppLaunch_Description", String(localized: "如果您现在进行游戏，可能无法获取之前的游戏进度，且可能永远失去进度。"))],
+                    buttons: [.init("IgnoreCloud", .init(key: "CloudSyncFailed_AppLaunch_Continue", String(localized: "仍然进行游戏")), role: "destructive"),
+                              .init("cancel", .init(key: "CloudSyncFailed_AppLaunch_Cancel", String(localized: "取消")), role: "cancel")])) == "IgnoreCloud"
+            case .conflict:
+                let times = try? await ui.cloudConflictTimes(appid)
+                let answer = await ask(.init(vapor: "cloudConflict", appid: appid,
+                    title: .init(key: launching ? "CloudConflict_AppLaunch_Header" : "CloudConflict_Header", String(localized: "云冲突")),
+                    message: [.init(key: launching ? "CloudConflict_AppLaunch_Description" : "CloudConflict_Description",
+                                    String(localized: "您本地的 \(name) 存档数据和 Steam 云的存储内容有冲突。"), name)],
+                    note: launching ? .init(key: "CloudConflict_AppLaunch_Footer_Note", String(localized: "注意：您必须做出选择才能启动该应用程序")) : nil,
+                    buttons: [.init("KeepLocal", .init(key: "CloudConflict_KeepLocal", String(localized: "本地存档"))),
+                              .init("KeepRemote", .init(key: "CloudConflict_KeepRemote", String(localized: "云存档"))),
+                              .init("cancel", .init(key: "CloudSyncFailed_AppLaunch_Cancel", String(localized: "取消")), role: "cancel")],
+                    localTime: times?.local ?? 0, remoteTime: times?.remote ?? 0))
+                guard answer == "KeepLocal" || answer == "KeepRemote" else { return false }
+                guard (try? await ui.resolveCloudConflict(appid, keepLocal: answer == "KeepLocal")) != nil else { return false }
+            }
+        }
+        return false
+    }
+
+    private func showCloud(_ appid: UInt32, _ state: SteamUI.CloudState) {
+        if cloudStates[appid] != state { cloudStates[appid] = state }
+        guard launchStage[appid] != nil, state.cloudStatus.isTransferring else { return }
+        launchStage[appid] = cloudLabel(state)
+    }
+
+    /// Steam's 云状态 wording for a state ("已是最新", "正在上传…（40%）").
+    func cloudLabel(_ state: SteamUI.CloudState) -> String {
+        let key = state.cloudStatus.stringKey
+        if (key == "Uploading" || key == "Downloading") && state.percent > 0,
+           let s = strings("AppDetails_CloudStatus_\(key)Percent", String(state.percent)) { return s }
+        return strings("AppDetails_CloudStatus_\(key)") ?? key
+    }
+
+    /// Reads a game's cloud state for the detail page; quiet when Steam is not reachable.
+    func loadCloudState(_ appid: UInt32) async {
+        guard uiOnline, let state = try? await ui.cloudState(appid) else { return }
+        if cloudStates[appid] != state { cloudStates[appid] = state }
+    }
+
+    /// Asks one of Vapor's own questions through SteamDialogs and waits for the answer (a button id, or the
+    /// cancel/dismiss id when the sheet is closed).
+    private func ask(_ dialog: SteamUI.Dialog) async -> String {
+        await withCheckedContinuation { c in
+            questions.append((dialog, { c.resume(returning: $0) }))
+            showNextDialog()
+        }
+    }
+
     // MARK: renderer choice
+
 
     /// The renderer the user picked for a game (by renderer and executable, so it survives ladder reordering).
     @Published private(set) var rendererChoices: [UInt32: String] = UserDefaults.standard.dictionary(forKey: "rendererChoices")?
@@ -736,6 +940,7 @@ final class EngineModel: ObservableObject {
 
     /// Steam's 停止: ends the game's wine process (the Windows process lives in it).
     func stopGame(_ appid: UInt32) {
+        if steamStarted.contains(appid) { uiAction { try await $0.terminateGame(appid) }; return }
         guard let process = gameProcesses[appid], process.isRunning else { running.remove(appid); return }
         process.terminate()
         // A game that ignores SIGTERM (stuck in a dialog) is killed after a grace period, as Steam does.

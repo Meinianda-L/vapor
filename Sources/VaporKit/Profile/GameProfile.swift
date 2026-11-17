@@ -207,7 +207,8 @@ public struct Profiler: Sendable {
             let what = denied.isEmpty ? String(localized: "反作弊") : denied.joined(separator: "/")
             raise(offline ? .needsTesting : .blocked, String(localized: "开发者不允许 \(what) 在 Wine/Proton 下运行\(source)"))
         } else if !userMode.isEmpty {
-            raise(.needsTesting, String(localized: "macOS Wine 没有 \(userMode.joined(separator: ")/String(localized: ")) 的运行环境，无法联机\(source)"))
+            let modes = userMode.joined(separator: "/")
+            raise(.needsTesting, String(localized: "macOS Wine 没有 \(modes) 的运行环境，无法联机\(source)"))
         }
         if let launch, offline {
             raise(.needsTesting, String(localized: "仅限离线：跳过反作弊，直接启动 \((launch.executable as NSString).lastPathComponent)"))
