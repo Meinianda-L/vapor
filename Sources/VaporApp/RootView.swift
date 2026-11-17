@@ -137,6 +137,20 @@ final class AppState: ObservableObject {
         destination = .friends
     }
 
+    /// Steam tried to open one of its own windows (a game's overlay, a steam:// link): show Vapor's page instead.
+    func follow(_ opened: SteamOpened) {
+        switch opened.kind {
+        case .settings: go(.settings)
+        case .friends: go(.friends)
+        case let .chat(steamID): if let steamID { chat(with: steamID) } else { go(.friends) }
+        case .downloads: go(.downloads)
+        case let .library(appid): if let appid { showGame(appid) } else { go(.all) }
+        case let .store(appid):
+            if let appid { show(.store(appid)) } else if let url = opened.url { open(url) } else { go(.store) }
+        case .other: if let url = opened.url { open(url) }
+        }
+    }
+
     /// A sidebar pick leaves whatever was open on top.
     func go(_ d: Destination) {
         web.close()
@@ -250,6 +264,11 @@ struct RootView: View {
         }
         .task(id: engine.uiOnline) { if engine.uiOnline { await state.webSession.link(to: engine.ui) } }
         .onChange(of: engine.steamApps, initial: true) { _, apps in store.merge(steamApps: Array(apps.values)) }
+        .onChange(of: engine.steamOpened) { _, opened in
+            guard let opened else { return }
+            engine.consumeSteamOpened()
+            state.follow(opened)
+        }
         .onChange(of: engine.progress) { old, new in
             // Downloads starting, finishing or going away change what is installed. A manifest caught
             // mid-write drops out for one poll, so rescan once the state has settled.
