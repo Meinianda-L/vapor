@@ -394,13 +394,16 @@ public final class SteamUI: @unchecked Sendable {
         public let launches: [Launch]?           // games Steam is launching (steam://run, a game restarting through Steam)
         public let shutdown: Shutdown?           // Steam is shutting down or restarting
         public let windows: [HiddenWindow]?      // Steam windows that opened and were kept hidden, newest last
+        public let toasts: [Toast]?              // Steam's overlay notifications (friend online, achievement …), newest last
     }
 
     /// A window or question Steam would have drawn itself (cloud conflict, launch option, launch error, any
     /// confirm). Its own window never shows; Vapor presents it and answers with `answerDialog(_:_:)`.
     public struct Dialog: Decodable, Sendable, Equatable, Identifiable {
         public let id: String
-        /// eula, launchOption, cloudConflict, cloudSyncFailed, cloudPending, cdkey, confirm, launchError, or generic (read off Steam's page).
+        /// eula, launchOption, cloudConflict, cloudSyncFailed, cloudPending, cdkey, confirm, launchError, microtxn
+        /// (a purchase in a game waiting for approval: `message` is the item, `details` the price; buttons `authorize` and `cancel`),
+        /// or generic (read off Steam's page).
         public let kind: String
         public let appid: UInt32
         public let title: Text?
@@ -413,6 +416,7 @@ public final class SteamUI: @unchecked Sendable {
         public let details: String?
         public let localTime: Int              // cloudConflict: newest local and cloud file times
         public let remoteTime: Int
+        public let remember: Text?             // launchOption: the label of "always use this", when Steam offers it
 
         /// Steam's English text, with the token it came from when there is one, so Vapor can use Steam's Chinese string.
         public struct Text: Decodable, Sendable, Equatable, Hashable {
@@ -453,14 +457,41 @@ public final class SteamUI: @unchecked Sendable {
         public let failed: Bool
     }
 
+    /// A Steam window that opened on its own (steam://open/settings, a game's "view friends", a notification's link)
+    /// and was kept hidden, or a page Steam navigated its main window to. Vapor shows its own page for `kind`.
     public struct HiddenWindow: Decodable, Sendable, Equatable {
         public let title: Dialog.Text?
+        public let time: Int
+        public let kind: Kind
+        /// Milliseconds since 1970 when it opened; later than any earlier window's, so a client can tell which are new.
+        public let at: Int
+        /// The web page for a store or other web destination.
+        public let url: String?
+
+        public enum Kind: Sendable, Equatable {
+            case settings
+            case friends
+            case chat(steamID: String?)
+            case downloads
+            case library(appid: UInt32?)
+            case store(appid: UInt32?)
+            case other
+        }
+    }
+
+    /// One of Steam's overlay notifications (a friend came online, an achievement unlocked …). Steam's own toast window
+    /// never shows; the text is what it would have said, in Steam's English unless a token was found.
+    public struct Toast: Decodable, Sendable, Equatable, Identifiable {
+        public let id: String
+        public let appid: UInt32
+        public let lines: [Dialog.Text]       // first the heading, then the text
         public let time: Int
     }
 
     /// Answers a dialog with one of its `buttons` ids, or "dismiss" (what closing Steam's window would do).
-    public func answerDialog(_ id: String, _ choice: String) async throws {
-        _ = try await agent("answerDialog(\(literal(id)), \(literal(choice)))")
+    /// `remember` is the launch-option dialog's "always use this" checkbox.
+    public func answerDialog(_ id: String, _ choice: String, remember: Bool = false) async throws {
+        _ = try await agent("answerDialog(\(literal(id)), \(literal(choice)), \(remember))")
     }
     /// Steam's 跳过 on the Vulkan shader step of a launch.
     public func skipShaders(_ gameActionID: Int) async throws { _ = try await agent("skipShaders(\(gameActionID))") }
@@ -700,7 +731,7 @@ public final class SteamUI: @unchecked Sendable {
 
     // MARK: - Agent
 
-    static let agentVersion = 16
+    static let agentVersion = 17
 
     /// Replaces the agent only when it is another version and idle: every client shares one agent, and an
     /// install or probe in flight must keep the agent that is driving it.
@@ -1138,7 +1169,7 @@ public final class SteamUI: @unchecked Sendable {
       const dropDialog = d => { const i = dialogs.indexOf(d); if (i >= 0) { dialogs.splice(i, 1); emit(); } };
       const dialogJSON = d => ({ id: d.id, kind: d.kind, appid: num(d.appid), title: d.title ?? null, message: (d.message || []).filter(Boolean),
         note: d.note ?? null, buttons: d.buttons || [], eulas: d.eulas ?? null, keys: d.keys ?? null, code: num(d.code), details: d.details ?? null,
-        localTime: num(d.localTime), remoteTime: num(d.remoteTime) });
+        localTime: num(d.localTime), remoteTime: num(d.remoteTime), remember: d.remember ?? null });
 
       // Buttons of a rendered Steam dialog, outermost clickable elements with a label (window controls have none).
       const readDom = root => {
@@ -1208,19 +1239,39 @@ public final class SteamUI: @unchecked Sendable {
         for (const d of dialogs.filter(d => d.gameActionID === id)) dropDialog(d);
         emit();
       };
-      // Steam's "always launch this way", stored by its launch-option dialog; -1 when there is none.
+      // Steam's "always launch this way": its launch-option chooser keeps the chosen nIndex in the client's local
+      // storage under Apps\<appid>\DefaultLaunchOption\<hash of the options>, so a changed option list asks again.
+      // The storage class and the hash come out of the chooser module's own imports, so they survive updates.
+      let optionStore = null;
+      const launchOptionStore = () => {
+        if (optionStore) return optionStore;
+        locate();
+        const id = Object.keys(req?.m || {}).find(k => String(req.m[k]).includes('DefaultLaunchOption'));
+        if (!id) return null;
+        const src = String(req.m[id]);
+        const imported = name => { const m = src.match(new RegExp('[,;\\s]' + name.replace(/\$/g, '\\$') + '=t\\((\\d+)\\)')); return m && req(m[1]); };
+        const st = src.match(/useMemo\(\(\)=>new ([\w$]+)\.([\w$]+),\[\]\)/);
+        const hs = src.match(/\(0,([\w$]+)\.([\w$]+)\)\(JSON\.stringify\([\w$]+\)\)/);
+        const Store = st && imported(st[1])?.[st[2]], hash = hs && imported(hs[1])?.[hs[2]];
+        if (!Store || !hash) return null;
+        const store = new Store();
+        return optionStore = { store, key: (appid, opts) => 'Apps\\' + appid + '\\DefaultLaunchOption\\' + (hash(JSON.stringify(opts)) >>> 0).toString(16) };
+      };
+      // The remembered option's nIndex, or -1 (nothing remembered, or the list no longer has it).
       const savedLaunchOption = async (appid, opts) => {
         try {
-          locate();
-          const id = Object.keys(req.m).find(k => String(req.m[k]).includes('DefaultLaunchOption'));
-          const src = String(req.m[id]), mod = req(id);
-          const keyOf = Object.values(mod).find(f => typeof f === 'function' && String(f).includes('DefaultLaunchOption'));
-          const m = src.match(/new ([\w$]+)\.([\w$]+);let [\w$]+=await [\w$]+\.GetString/);
-          const v = m && src.match(new RegExp('[,;\\s]' + m[1].replace('$', '\\$') + '=t\\((\\d+)\\)'));
-          const saved = await new (req(v[1])[m[2]])().GetString(keyOf(appid, opts));
+          const o = launchOptionStore(); if (!o) return -1;
+          const saved = await o.store.GetString(o.key(appid, opts));
           const n = parseInt(saved);
-          return saved?.length && n >= 0 && n < opts.length ? n : -1;
+          return saved?.length && opts.some(x => num(x.nIndex) === n) ? n : -1;
         } catch { return -1; }
+      };
+      // What the chooser's Play button does: remembered when the box is ticked, forgotten otherwise.
+      const rememberLaunchOption = async (appid, opts, nIndex, on) => {
+        try {
+          const o = launchOptionStore(); if (!o) return;
+          if (on) await o.store.StoreString(o.key(appid, opts), String(nIndex)); else await o.store.RemoveObject(o.key(appid, opts));
+        } catch (e) { console.error('[vapor] launch option', e); }
       };
       const optionLabel = o => {
         const d = String(o.strDescription || '');
@@ -1234,9 +1285,9 @@ public final class SteamUI: @unchecked Sendable {
         const ask = (kind, title, message, buttons, extra = {}) => addDialog({
           kind, appid, gameActionID: id, title, message, ...extra.fields,
           buttons: extra.noCancel ? buttons : [...buttons, choice('cancel', extra.cancel ?? T('Button_Cancel'), 'cancel')],
-          answer: async c => {
-            if (c === 'cancel' || c === 'dismiss') { if (!extra.noCancel) return SteamClient.Apps.CancelGameAction(id); c = buttons[0].id; }
-            await extra.accept?.(c);
+          answer: async (c, remember) => {
+            if (c === 'cancel' || c === 'dismiss') { if (!extra.noCancel) return SteamClient.Apps.CancelGameAction(id); c = buttons[0].id; remember = false; }
+            await extra.accept?.(c, remember);
             go(c);
           } });
         switch (task) {
@@ -1251,10 +1302,12 @@ public final class SteamUI: @unchecked Sendable {
           case 'ShowLaunchOption': {
             const opts = (await SteamClient.Apps.GetLaunchOptionsForApp(appid)) || [];
             const saved = await savedLaunchOption(appid, opts);
-            if (saved >= 0) return go(opts[saved].nIndex);
+            if (saved >= 0) return go(saved);
             if (opts.length === 1) return go(opts[0].nIndex);
             return ask('launchOption', plain(name) ?? T('GameAction_Play'), [T('LaunchOptionsDialog_MakeSelection', name)],
-              opts.map((o, i) => choice(num(o.nIndex), optionLabel(o), i === 0 ? 'default' : null)), { fields: { note: T('LaunchOptionsDialog_SeeProperties') } });
+              opts.map((o, i) => choice(num(o.nIndex), optionLabel(o), i === 0 ? 'default' : null)),
+              { fields: { note: T('LaunchOptionsDialog_SeeProperties'), remember: T('LaunchOptionsDialog_Remember') },
+                accept: (c, remember) => rememberLaunchOption(appid, opts, c, !!remember) });
           }
           case 'ShowVROculusOnly':
             return ask('confirm', T('Steam_OculusOnlyGameWarning_Title'), [T(parseInt(details) ? 'Steam_OculusOnlyGameWarning_Desc' : 'Steam_IncorrectVRSDKWarning_Desc', name)],
@@ -1318,6 +1371,33 @@ public final class SteamUI: @unchecked Sendable {
                     buttons: [choice('ok', T('Button_OK'), 'default')], answer: async () => {} });
         emit();
       };
+      // A purchase a game asks the user to approve (the overlay's microtransaction page). Steam's own page lives in the
+      // game's overlay, which nobody sees here; its text is fetched with the user's session and shown as a dialog, and the
+      // buttons call what the page's own steam://close/authorize and steam://close/cancel links call.
+      const PRICE = /[$¥￥€£]\s?\d|\d[\d.,]*\s?(?:CNY|RMB|USD|EUR|GBP|元)|\b(?:CNY|RMB|USD|EUR)\b/;
+      const parseMicroTxn = html => {
+        const doc = new DOMParser().parseFromString(String(html ?? ''), 'text/html');
+        for (const e of doc.querySelectorAll('script, style, noscript, header, footer, nav, select, button, a[href^="steam:"]')) e.remove();
+        for (const e of doc.querySelectorAll('br, p, div, tr, li, h1, h2, h3, h4, td, th')) e.append('\n');
+        const lines = [...new Set((doc.body?.textContent || '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+        return { price: lines.filter(l => PRICE.test(l)).slice(0, 3), lines: lines.filter(l => !PRICE.test(l)).slice(0, 8) };
+      };
+      const microTxn = async (appid, trans, url) => {
+        if (!attended()) return;
+        let page = { price: [], lines: [] };
+        try { if (url) page = parseMicroTxn(await (await fetch(String(url).replace(/^http:/, 'https:'), { credentials: 'include' })).text()); } catch {}
+        for (const d of dialogs.filter(d => d.kind === 'microtxn' && String(d.trans) === String(trans))) dropDialog(d);
+        const done = async approve => { await SteamClient.User[approve ? 'AuthorizeMicrotxn' : 'CancelMicrotxn'](trans); };
+        const d = { kind: 'microtxn', appid: num(appid), trans, title: T('Overlay_MicroTxnAuth_Title'), message: page.lines.map(plain),
+                    details: page.price.join('\n') || null,
+                    // No default role: Enter must never approve a purchase. Only the explicit button approves;
+                    // closing the sheet cancels, as closing the overlay does.
+                    buttons: [choice('authorize', { text: 'Authorize', key: null, args: [] }), choice('cancel', T('Button_Cancel'), 'cancel')],
+                    answer: async c => done(c === 'authorize') };
+        addDialog(d);
+      };
+      const microTxnDismissed = (appid, trans) => { for (const d of dialogs.filter(d => d.kind === 'microtxn' && String(d.trans) === String(trans))) dropDialog(d); };
+
       // Launches already under way when the agent arrives; one waiting for an answer is asked again.
       const resumeLaunches = async () => {
         let list = [];
@@ -1333,9 +1413,30 @@ public final class SteamUI: @unchecked Sendable {
 
       // --- popups: created hidden; dialogs read back from their page ------------------------------
       const hidden = new Set();
-      let popupHooks = null, modalPatch = null, pendingModal = null, mainGuard = null;
+      let popupHooks = null, modalPatch = null, pendingModal = null, mainGuard = null, navHook = null;
       const windows = [];                       // Steam windows kept hidden lately, for Vapor to show its own counterpart
-      const silent = new Set(['LibraryHome_MarketingMessages', 'PendingGifts_Title', 'SteamUI_ValveSurvey_Title']);
+      const toasts = [];                        // Steam's notification toasts, for Vapor to post as its own
+      // What each kind of Steam window becomes. `close` is how long after it opened Steam's window is closed (Vapor has
+      // its own page for it, and a window left open also never reports a second steam://open); null leaves it alone
+      // because Steam still needs it. `event` windows are recorded for Vapor to navigate to its counterpart. Anything not
+      // listed is recorded as "other" and closed after ten idle minutes, so hidden windows do not pile up.
+      const WINDOWS = [
+        { kind: 'marketing', title: ['LibraryHome_MarketingMessages', 'PendingGifts_Title', 'SteamUI_ValveSurvey_Title'], close: 0 },
+        { kind: 'settings', title: ['Settings_Title'], close: 1500, event: true },
+        { kind: 'friends', name: /^friendslist/, title: ['WindowTitle_FriendsList'], close: 1500, event: true },
+        { kind: 'chat', name: /^(chat_|ChatWindow_)/, close: 1500, event: true },
+        { kind: 'toast', name: /^notificationtoasts_/, close: null },       // Steam closes its own toast
+        { kind: 'login', title: ['SignIn_Title'], close: null },            // the client's sign-in; hideLoginWindow keeps it hidden
+        { kind: 'microtxn', name: /^(MTX)?OverlayBrowser_|^MTXOverlayBrowser_/, close: null },   // an in-game purchase approval
+      ];
+      const OTHER_IDLE_MS = 10 * 60 * 1000;
+      let lastWindowAt = 0;
+      const recordWindow = w => {
+        lastWindowAt = Math.max(Date.now(), lastWindowAt + 1);
+        windows.push({ title: null, ...w, time: Math.floor(Date.now() / 1000), at: lastWindowAt });
+        windows.splice(0, Math.max(0, windows.length - 10));
+        emit();
+      };
       const isMenu = p => /^contextmenu_/.test(g(() => p.GetName()) || '');
       const keepHidden = p => {
         if (hidden.has(p) || isMenu(p) || p.window === mainWindow() || mainAllowed || !attended()) return;
@@ -1350,28 +1451,53 @@ public final class SteamUI: @unchecked Sendable {
         if (modal) { pendingModal = null; modal.popup = p; return; }
         setTimeout(() => describePopup(p), 700);
       };
+      // Never closed behind Steam's back: the main window, a window that holds a question Vapor shows (its answer closes
+      // it), the client's sign-in, and anything while Steam shuts down.
+      const keepOpen = p => {
+        if (p.window === mainWindow() || num(g(() => SteamUIStore.m_shutdownState.eShutdownState)) !== 0) return true;
+        const doc = g(() => p.window.document);
+        if (dialogs.some(d => d.popup === p || (d.root && d.root.ownerDocument === doc))) return true;
+        return !!g(() => SteamUIStore.WindowStore.SteamUIWindows.some(w => w.IsDesktopLoginWindow() && w.BrowserWindow === p.window));
+      };
+      const closeWindow = (p, ms) => setTimeout(() => { if (!disposed && !g(() => p.BIsClosed()) && !keepOpen(p)) g(() => p.Close()); }, ms);
+      // The friend a chat window is with, when its title (the friend's name) names exactly one friend.
+      const chatPeer = title => {
+        const name = title?.text;
+        const found = name ? (g(() => friendStore.m_FriendsUIFriendStore.all_friends) || []).filter(f => g(() => f.persona.m_strPlayerName) === name) : [];
+        return found.length === 1 ? g(() => String(found[0].persona.m_steamid.ConvertTo64BitString())) ?? null : null;
+      };
+      const readToast = (p, name, again) => {
+        const doc = g(() => p.window.document), c = doc && readDom(doc.body);
+        const lines = c ? c.lines.slice(0, 4).map(plain) : [];
+        if (!lines.length) { if (!again) setTimeout(() => readToast(p, name, true), 800); return; }
+        toasts.push({ id: name, appid: num(name.match(/^notificationtoasts_uid(\d+)/)?.[1]), lines, time: Math.floor(Date.now() / 1000) });
+        toasts.splice(0, Math.max(0, toasts.length - 10));
+        emit();
+      };
       const describePopup = p => {
         if (disposed || g(() => p.BIsClosed())) return;
         const doc = g(() => p.window.document); if (!doc) return;
         if (dialogs.some(d => d.root?.ownerDocument === doc)) return;   // a modal inside it already asks
-        const title = plain(p.m_strTitle || doc.title);
-        if (title?.key && silent.has(title.key)) { g(() => p.Close()); return; }
+        const title = plain(p.m_strTitle || doc.title), name = g(() => p.GetName()) || '';
+        const rule = WINDOWS.find(r => r.name?.test(name) || (title?.key && r.title?.includes(title.key)));
+        if (rule?.kind === 'toast') return readToast(p, name);
+        if (rule && rule.close == null) return;
+        if (rule?.kind === 'marketing') { g(() => p.Close()); return; }
         // Tooltips, toasts and menus never ask anything; only dialog markup with a few buttons is a question,
         // anything else is a window (settings, friends list, chat) Vapor has its own page for.
         const quiet = num(p.m_rgParams?.eCreationFlags) & (4 | 512 | 65536);
         const dialogLike = doc.body.classList.contains('ModalDialogBody') || !!doc.querySelector('.ModalPosition, .DialogContent');
         const c = readDom(doc.body);
         const shuttingDown = num(g(() => SteamUIStore.m_shutdownState.eShutdownState)) !== 0;
-        if (!quiet && dialogLike && !shuttingDown && c && c.buttons.length && c.buttons.length <= 6 && c.length < 2000) {
+        if (!rule && !quiet && dialogLike && !shuttingDown && c && c.buttons.length && c.buttons.length <= 6 && c.length < 2000) {
           const d = { kind: 'generic', title, message: [], buttons: [], popup: p,
                       answer: async ch => { if (ch !== 'dismiss' && click(d, ch)) return recheck(d); g(() => p.Close()); } };
           fromDom(d, doc.body);
           if (!c.header && title) d.title = title;
           addDialog(d);
         } else {
-          windows.push({ title, time: Math.floor(Date.now() / 1000) });
-          windows.splice(0, Math.max(0, windows.length - 10));
-          emit();
+          recordWindow({ title, kind: rule?.kind ?? 'other', steamID: rule?.kind === 'chat' ? chatPeer(title) : null });
+          closeWindow(p, rule ? rule.close : OTHER_IDLE_MS);
         }
       };
       const released = p => {
@@ -1443,9 +1569,42 @@ public final class SteamUI: @unchecked Sendable {
         g(() => w.document.addEventListener('visibilitychange', on));
         mainGuard = { w, off: () => g(() => w.document.removeEventListener('visibilitychange', on)) };
       };
+      // Steam navigates its (hidden) main window for steam://nav and steam://store links; the page it goes to is an
+      // event for Vapor to show its own counterpart. The first half minute is Steam settling in, not a request.
+      const routeEvent = loc => {
+        const path = String(loc?.pathname || ''), url = String(loc?.state?.strURL || '');
+        let m;
+        if (path.startsWith('/library/downloads')) return { kind: 'downloads' };
+        if ((m = path.match(/^\/library\/(?:app|collection\/[^/]+)\/(\d+)/))) return { kind: 'library', appid: num(m[1]) };
+        if (path.startsWith('/library')) return { kind: 'library' };
+        if (path.startsWith('/settings')) return { kind: 'settings' };
+        if (path.startsWith('/browser') && url) {
+          if ((m = url.match(/^https?:\/\/store\.steampowered\.com\/(?:agecheck\/)?app\/(\d+)/))) return { kind: 'store', appid: num(m[1]), url };
+          return { kind: /^https?:\/\/store\.steampowered\.com\//.test(url) ? 'store' : 'other', url };
+        }
+        return null;
+      };
+      let lastNav = null;
+      const hookNav = () => {
+        const h = g(() => SteamUIStore.WindowStore.MainWindowInstance.m_history);
+        if (!h?.listen || navHook?.h === h) return;
+        navHook?.off();
+        const since = Date.now();
+        const off = h.listen((a, b) => g(() => {
+          const action = a?.action ?? b;
+          if (disposed || !attended() || action === 'REPLACE' || Date.now() - since < 30000) return;
+          const e = routeEvent(a?.location ?? a); if (!e) return;
+          const key = JSON.stringify(e);
+          if (lastNav?.key === key && Date.now() - lastNav.at < 2000) return;
+          lastNav = { key, at: Date.now() };
+          recordWindow(e);
+        }));
+        navHook = { h, off: typeof off === 'function' ? off : () => {} };
+      };
       const hookWindows = () => {
         if (disposed) return;
         guardMain();
+        hookNav();
         hookModals();
         if (!window.g_PopupManager) return;
         popupHooks ??= [g_PopupManager.AddPopupCreatedCallback(p => g(() => keepHidden(p))),
@@ -1470,6 +1629,7 @@ public final class SteamUI: @unchecked Sendable {
           modalPatch = null;
         }
         mainGuard?.off(); mainGuard = null;
+        navHook?.off(); navHook = null;
         clearInterval(launchTimer);
       };
 
@@ -1490,6 +1650,8 @@ public final class SteamUI: @unchecked Sendable {
             ours.push(SteamClient.Apps.RegisterForGameActionStart(launchStarted));
             ours.push(SteamClient.Apps.RegisterForGameActionTaskChange(launchTask));
             ours.push(SteamClient.Apps.RegisterForGameActionEnd(launchEnded));
+            ours.push(g(() => SteamClient.Overlay.RegisterForMicroTxnAuth((appid, trans, flags, url) => { microTxn(appid, trans, url).catch(e => console.error('[vapor] microtxn', e)); })));
+            ours.push(g(() => SteamClient.Overlay.RegisterForMicroTxnAuthDismiss(microTxnDismissed)));
             for (const n of ['RegisterForShutdownStart', 'RegisterForShutdownState', 'RegisterForShutdownFailed', 'RegisterForShutdownDone'])
               ours.push(g(() => SteamClient.User[n](() => emit())));
             heartbeat = setInterval(() => { takeover(); hookWindows(); emit(); }, 5000);
@@ -1544,6 +1706,7 @@ public final class SteamUI: @unchecked Sendable {
             shutdown: g(() => { const st = SteamUIStore.m_shutdownState; return st?.eShutdownState ? { state: num(st.eShutdownState), reason: num(st.eShutdownReason),
               appid: num(st.appid), allowForceQuit: !!st.bAllowForceQuit, failed: !!st.bFailed } : null; }) ?? null,
             windows: windows.slice(),
+            toasts: toasts.slice(),
           };
         },
         async install(appid) {
@@ -1591,13 +1754,14 @@ public final class SteamUI: @unchecked Sendable {
         showMain,
         // Clients call this every few seconds; see attended().
         ping() { const was = attended(); lastPing = Date.now(); if (!was) hookWindows(); return true; },
-        async answerDialog(id, c) {
+        async answerDialog(id, c, remember) {
           const d = dialogs.find(x => x.id === String(id));
           if (!d) return false;
           dropDialog(d);
-          await d.answer(String(c));
+          await d.answer(String(c), !!remember);
           return true;
         },
+        parseMicroTxn,
         skipShaders(id) { SteamClient.Apps.ContinueGameAction(Number(id), 'SkipShaders'); return true; },
         cancelLaunch(id) { SteamClient.Apps.CancelGameAction(Number(id)); return true; },
         loginQR() { return startLogin('qr', s => s.Start()); },
@@ -1923,7 +2087,7 @@ extension SteamUI.Notification {
 extension SteamUI.Snapshot {
     enum CodingKeys: String, CodingKey {
         case loggedIn, account, downloadsPaused, downloads, overview, history, install, uninstallRequest, running, folders, apps
-        case detached, shelves, chats, unreadNotifications, login, dialogs, launches, shutdown, windows
+        case detached, shelves, chats, unreadNotifications, login, dialogs, launches, shutdown, windows, toasts
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1934,18 +2098,18 @@ extension SteamUI.Snapshot {
         chats = c.optionalList(.chats); unreadNotifications = c.optional(.unreadNotifications)
         login = c.optional(.login)
         dialogs = c.optionalList(.dialogs); launches = c.optionalList(.launches); shutdown = c.optional(.shutdown)
-        windows = c.optionalList(.windows)
+        windows = c.optionalList(.windows); toasts = c.optionalList(.toasts)
     }
 }
 
 extension SteamUI.Dialog {
-    enum CodingKeys: String, CodingKey { case id, kind, appid, title, message, note, buttons, eulas, keys, code, details, localTime, remoteTime }
+    enum CodingKeys: String, CodingKey { case id, kind, appid, title, message, note, buttons, eulas, keys, code, details, localTime, remoteTime, remember }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = c.value(.id); kind = c.optional(.kind) ?? "generic"; appid = c.value(.appid); title = c.optional(.title)
         message = c.list(.message); note = c.optional(.note); buttons = c.list(.buttons); eulas = c.optionalList(.eulas)
         keys = c.optionalList(.keys); code = c.value(.code); details = c.optional(.details)
-        localTime = c.value(.localTime); remoteTime = c.value(.remoteTime)
+        localTime = c.value(.localTime); remoteTime = c.value(.remoteTime); remember = c.optional(.remember)
     }
 }
 
@@ -1984,10 +2148,28 @@ extension SteamUI.Shutdown {
 }
 
 extension SteamUI.HiddenWindow {
-    enum CodingKeys: String, CodingKey { case title, time }
+    enum CodingKeys: String, CodingKey { case title, time, kind, at, url, steamID, appid }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        title = c.optional(.title); time = c.value(.time)
+        title = c.optional(.title); time = c.value(.time); at = c.value(.at); url = c.optional(.url)
+        let appid: UInt32? = c.optional(.appid)
+        switch c.optional(.kind) as String? {
+        case "settings": kind = .settings
+        case "friends": kind = .friends
+        case "chat": kind = .chat(steamID: c.optional(.steamID))
+        case "downloads": kind = .downloads
+        case "library": kind = .library(appid: appid)
+        case "store": kind = .store(appid: appid)
+        default: kind = .other
+        }
+    }
+}
+
+extension SteamUI.Toast {
+    enum CodingKeys: String, CodingKey { case id, appid, lines, time }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id); appid = c.value(.appid); lines = c.list(.lines); time = c.value(.time)
     }
 }
 

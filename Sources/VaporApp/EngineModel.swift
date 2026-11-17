@@ -48,6 +48,12 @@ final class EngineModel: ObservableObject {
     @Published private(set) var launches: [SteamUI.Launch] = []
     @Published private(set) var steamShutdown: SteamUI.Shutdown?
     private var steamDialogs: [SteamUI.Dialog] = []
+    // Steam windows and toasts (see SteamOpened.swift)
+    /// Set when Steam opened a window or page Vapor has its own page for; the integrator navigates and calls `consumeSteamOpened()`.
+    @Published private(set) var steamOpened: SteamOpened?
+    private var seenWindowAt: Int?
+    private let toasts: SteamToasts? = Bundle.main.bundleIdentifier != nil
+        && !ProcessInfo.processInfo.arguments.contains("--snapshot") ? SteamToasts() : nil
     /// Answered here but maybe not yet gone from Steam's next snapshot.
     private var answeredDialogs: Set<String> = []
     /// Dock progress and "download finished" notifications; only for the real app (notifications need
@@ -174,6 +180,8 @@ final class EngineModel: ObservableObject {
             showNextDialog()
         }
         if let l = s.launches, l != launches { launches = l }
+        if let w = s.windows { noteOpenedWindows(w) }
+        if let t = s.toasts { toasts?.update(t, say: say, appName: { [steamApps] in steamApps[$0]?.name }) }
         if s.shutdown != steamShutdown { steamShutdown = s.shutdown }
         // The agent's heartbeat keeps pushing while the account is logged off; that must not revive the UI.
         guard isOnline || forcedUIOnline else { return }
@@ -243,11 +251,22 @@ final class EngineModel: ObservableObject {
     }
 
     /// Answers `steamDialog` with one of its button ids, or `SteamUI.Dialog.dismiss` (what closing Steam's window does).
-    func answerDialog(_ choice: String) {
+    func answerDialog(_ choice: String, remember: Bool = false) {
         guard let dialog = steamDialog else { return }
         answeredDialogs.insert(dialog.id)
         showNextDialog()
-        uiAction(requiresLogin: false) { try await $0.answerDialog(dialog.id, choice) }
+        uiAction(requiresLogin: false) { try await $0.answerDialog(dialog.id, choice, remember: remember) }
+    }
+    func consumeSteamOpened() { steamOpened = nil }
+    /// Windows the agent recorded since the last snapshot; the first snapshot only sets the baseline (earlier ones are history).
+    private func noteOpenedWindows(_ windows: [SteamUI.HiddenWindow]) {
+        guard let seen = seenWindowAt else { seenWindowAt = windows.map(\.at).max() ?? 0; return }
+        let fresh = windows.filter { $0.at > seen }
+        guard let newest = fresh.map(\.at).max() else { return }
+        seenWindowAt = newest
+        if let w = fresh.last(where: { $0.kind != .other || $0.url != nil }) {
+            steamOpened = SteamOpened(id: w.at, kind: w.kind, url: w.url.flatMap(URL.init(string:)))
+        }
     }
     func skipShaders(_ launch: SteamUI.Launch) { uiAction { try await $0.skipShaders(launch.gameActionID) } }
     func cancelLaunch(_ launch: SteamUI.Launch) { uiAction { try await $0.cancelLaunch(launch.gameActionID) } }

@@ -22,11 +22,12 @@ private struct SteamDialogsModifier: ViewModifier {
 }
 
 extension EngineModel {
-    /// Steam's Chinese string for the text's token when there is one, else Steam's own (English) text.
+    /// Steam's Chinese string for the text's token when there is one; failing that for the token whose English text or
+    /// template (names and numbers filled in) the text is; else Steam's own (English) text.
     func say(_ t: SteamUI.Dialog.Text?) -> String {
         guard let t else { return "" }
         if let key = t.key, let s = strings.text(key, t.args) { return s }
-        return t.text
+        return strings.localize(t.text) ?? t.text
     }
 }
 
@@ -34,6 +35,7 @@ struct SteamDialogSheet: View {
     let dialog: SteamUI.Dialog
     @EnvironmentObject var engine: EngineModel
     @State private var option: String?
+    @State private var remember = false
     @State private var rendered: [String: AttributedString] = [:]
 
     private var name: String { engine.steamApps[dialog.appid]?.name ?? "" }
@@ -41,6 +43,9 @@ struct SteamDialogSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.system(size: 15, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+            if dialog.kind == "microtxn", !name.isEmpty {
+                Text(name).font(.system(size: 12.5, weight: .medium))
+            }
             ForEach(Array(messages.enumerated()), id: \.offset) { _, line in
                 Text(line)
                     .font(.system(size: 12.5))
@@ -53,6 +58,7 @@ struct SteamDialogSheet: View {
             case "cdkey": keys
             case "cloudConflict": cloudTimes
             case "launchOption": options
+            case "microtxn": purchase
             default: EmptyView()
             }
             if let note = dialog.note {
@@ -179,6 +185,20 @@ struct SteamDialogSheet: View {
             }
         }
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
+        if let label = dialog.remember {
+            Toggle(engine.say(label), isOn: $remember).toggleStyle(.checkbox).font(.system(size: 12))
+        }
+    }
+
+    /// A purchase a game asks to approve: the price, large, under the item lines above it.
+    @ViewBuilder private var purchase: some View {
+        if let price = dialog.details {
+            Text(price)
+                .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
+        }
     }
 
     // MARK: buttons
@@ -192,7 +212,7 @@ struct SteamDialogSheet: View {
             if dialog.kind == "launchOption" {
                 if let cancel = dialog.cancelChoice { choiceButton(cancel) }
                 Button(engine.strings("GameAction_Play") ?? "开始游戏") {
-                    engine.answerDialog(option ?? launchChoices.first?.id ?? SteamUI.Dialog.dismiss)
+                    engine.answerDialog(option ?? launchChoices.first?.id ?? SteamUI.Dialog.dismiss, remember: remember)
                 }
                 .keyboardShortcut(.defaultAction)
             } else if dialog.buttons.isEmpty {
@@ -205,8 +225,12 @@ struct SteamDialogSheet: View {
         }
     }
 
+    private func label(_ c: SteamUI.Dialog.Choice) -> String {
+        dialog.kind == "microtxn" && c.id == "authorize" ? "授权" : engine.say(c.label)
+    }
+
     @ViewBuilder private func choiceButton(_ c: SteamUI.Dialog.Choice) -> some View {
-        let button = Button(engine.say(c.label), role: c.role == "destructive" ? .destructive : nil) { engine.answerDialog(c.id) }
+        let button = Button(label(c), role: c.role == "destructive" ? .destructive : nil) { engine.answerDialog(c.id) }
             .disabled(c.role == "disabled")
         switch c.role {
         case "cancel": button.keyboardShortcut(.cancelAction)
