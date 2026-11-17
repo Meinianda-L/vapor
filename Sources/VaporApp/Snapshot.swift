@@ -76,6 +76,10 @@ enum Snapshot {
         capture(state, to: dir.appendingPathComponent("store.png"))
         RunLoop.current.run(until: Date().addingTimeInterval(8))
         capture(state, to: dir.appendingPathComponent("store.png"))
+        state.destination = .community
+        capture(state, to: dir.appendingPathComponent("community.png"))
+        RunLoop.current.run(until: Date().addingTimeInterval(8))
+        capture(state, to: dir.appendingPathComponent("community.png"))
         // Native pages load in the view's task; fetch first so the capture shows the page, not its skeleton.
         for (name, appid) in [("storepage-owned.png", UInt32(730)), ("storepage.png", UInt32(1091500))] {
             var page: StorePage??

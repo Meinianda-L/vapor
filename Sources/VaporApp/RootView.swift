@@ -2,28 +2,30 @@ import SwiftUI
 import VaporKit
 
 enum Destination: Hashable {
-    case store, downloads, friends, all, installed, windows, mac, hidden, runtimes, settings
+    case store, community, downloads, friends, all, installed, windows, mac, hidden, runtimes, settings
     case collection(String)
 
     var title: String {
         switch self {
-        case .hidden: return "隐藏的游戏"
-        case .collection: return "收藏"
-        case .store: return "商店"
-        case .downloads: return "下载"
-        case .friends: return "好友"
-        case .all: return "所有游戏"
-        case .installed: return "已安装"
-        case .windows: return "Windows 游戏"
-        case .mac: return "Mac 原生"
-        case .runtimes: return "运行时"
-        case .settings: return "设置"
+        case .hidden: return String(localized: "隐藏的游戏")
+        case .collection: return String(localized: "收藏")
+        case .store: return String(localized: "商店")
+        case .community: return String(localized: "社区")
+        case .downloads: return String(localized: "下载")
+        case .friends: return String(localized: "好友")
+        case .all: return String(localized: "所有游戏")
+        case .installed: return String(localized: "已安装")
+        case .windows: return String(localized: "Windows 游戏")
+        case .mac: return String(localized: "Mac 原生")
+        case .runtimes: return String(localized: "运行时")
+        case .settings: return String(localized: "设置")
         }
     }
 
     var symbol: String {
         switch self {
         case .store: return "bag"
+        case .community: return "bubble.left.and.bubble.right"
         case .downloads: return "arrow.down.circle"
         case .friends: return "person.2"
         case .all: return "square.grid.2x2"
@@ -324,6 +326,8 @@ struct RootView: View {
         switch state.destination ?? .all {
         case .store:
             StoreHomeView(open: state.open, openApp: { state.show(.store($0)) })
+        case .community:
+            CommunityHomeView(open: state.open, openApp: { state.show(.store($0)) })
         case .friends:
             FriendsView(openProfile: { state.show(.profile($0)) }, chatWith: state.chatWith)
                 .onAppear { state.chatWith = nil }
@@ -363,7 +367,7 @@ struct Sidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            group("Steam", [.store, .downloads, .friends], counts: false)
+            group("Steam", [.store, .community, .downloads, .friends], counts: false)
             group("游戏库", [.all, .installed, .windows, .mac] + collections + (hasHidden ? [.hidden] : []), counts: true)
             group("Vapor", [.runtimes, .settings], counts: false)
             Spacer()
