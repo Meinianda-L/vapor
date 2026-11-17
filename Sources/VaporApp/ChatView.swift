@@ -118,6 +118,7 @@ struct ChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .bottom, spacing: 6) {
             TextField(engine.uiOnline ? String(localized: "发消息") : String(localized: "Windows Steam 未运行，暂时无法发送"), text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
@@ -133,6 +134,10 @@ struct ChatView: View {
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.surface))
                 .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Theme.hairline))
+                EmoticonPickerButton(onEmoticon: { draft = draft.appendingEmoticon($0); focused = true },
+                                     onSticker: { sendSticker($0) })
+                    .padding(.bottom, 3)
+            }
             if sendFailed {
                 Text(String(localized: "发送失败，消息仍保留在输入框里")).font(.system(size: 11)).foregroundStyle(Theme.bad)
             }
@@ -160,8 +165,18 @@ struct ChatView: View {
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !sending, engine.uiOnline else { return }
-        let id = friend.steamID
         draft = ""
+        deliver(text)
+    }
+
+    /// A sticker is a message of its own, as Steam's picker sends it; the draft stays as it is.
+    private func sendSticker(_ name: String) {
+        guard !sending, engine.uiOnline else { return }
+        deliver("/sticker \(name)", restoreOnFailure: false)
+    }
+
+    private func deliver(_ text: String, restoreOnFailure: Bool = true) {
+        let id = friend.steamID
         sending = true
         sendFailed = false
         sendTask = Task {
@@ -173,7 +188,7 @@ struct ChatView: View {
             } catch {
                 guard !Task.isCancelled, id == friend.steamID else { return }
                 sendFailed = true
-                if draft.isEmpty { draft = text }
+                if restoreOnFailure && draft.isEmpty { draft = text }
             }
         }
     }

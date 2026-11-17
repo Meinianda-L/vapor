@@ -1276,6 +1276,16 @@
         }
       }
     },
+    "Windows Steam 在线后才能使用表情。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Emoticons are available once Windows Steam is online."
+          }
+        }
+      }
+    },
     "Windows Steam 已登出（%@）": {
       "localizations": {
         "en": {
@@ -5048,6 +5058,16 @@
         }
       }
     },
+    "搜索表情": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search Emoticons"
+          }
+        }
+      }
+    },
     "搜索讨论": {
       "localizations": {
         "en": {
@@ -5556,6 +5576,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Most Recent Trade"
+          }
+        }
+      }
+    },
+    "最近使用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recently Used"
           }
         }
       }
@@ -6522,6 +6552,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Couldn't find the Windows Steam that was just installed."
+          }
+        }
+      }
+    },
+    "没有找到匹配的表情。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No matching emoticons."
           }
         }
       }
@@ -7844,6 +7884,26 @@
         }
       }
     },
+    "表情": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Emoticons"
+          }
+        }
+      }
+    },
+    "表情和贴纸": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Emoticons and Stickers"
+          }
+        }
+      }
+    },
     "视频": {
       "localizations": {
         "en": {
@@ -8144,6 +8204,16 @@
         }
       }
     },
+    "贴纸": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stickers"
+          }
+        }
+      }
+    },
     "资料": {
       "localizations": {
         "en": {
@@ -8426,6 +8496,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "This forum has no topics yet."
+          }
+        }
+      }
+    },
+    "这个账户还没有 Steam 表情或贴纸。可以在点数商店兑换，或通过集换式卡牌获得。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This account doesn't have any Steam emoticons or stickers yet. Get them in the Points Shop or from trading cards."
           }
         }
       }

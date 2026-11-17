@@ -31,10 +31,14 @@ struct CommentsSection: View {
 
     private var compose: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("添加留言", text: $draft, axis: .vertical)
-                .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.text).lineLimit(2...6)
-                .padding(10)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            HStack(alignment: .bottom, spacing: 6) {
+                TextField("添加留言", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.text).lineLimit(2...6)
+                    .padding(10)
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                // Steam's comment box turns ":name:" into the emoticon, as its own picker inserts it.
+                EmoticonPickerButton(onEmoticon: { draft = draft.appendingEmoticon($0) }).padding(.bottom, 4)
+            }
             HStack(spacing: 14) {
                 Button(posting ? String(localized: "正在发表…") : String(localized: "发表")) { Task { await submit() } }
                     .buttonStyle(.plain).font(.system(size: 12.5, weight: .medium))
