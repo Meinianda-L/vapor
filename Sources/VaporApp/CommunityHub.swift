@@ -15,8 +15,8 @@ struct CommunityHubView: View {
     }
 
     var body: some View {
-        CommunityFrame(title: detail == nil ? (hub?.appName.isEmpty == false ? "\(hub!.appName) 社区" : "社区") : nil,
-                       back: detail == nil ? "返回" : tab.title, open: open,
+        CommunityFrame(title: detail == nil ? (hub?.appName.isEmpty == false ? String(localized: "\(hub!.appName) 社区") : String(localized: "社区")) : nil,
+                       back: detail == nil ? String(localized: "返回") : tab.title, open: open,
                        onBack: { if detail == nil { onClose() } else { detail = nil } }) {
             if let detail {
                 CommunityDetailHost(appid: appid, detail: detail, open: open, subscribe: nil)
@@ -58,7 +58,7 @@ private struct HubOverview: View {
             VStack(alignment: .leading, spacing: 34) {
                 let topics = cards.filter { $0.kind == .discussion }
                 if !topics.isEmpty {
-                    section("讨论", .discussions) {
+                    section(String(localized: "讨论"), .discussions) {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(topics.prefix(8).enumerated()), id: \.element.id) { i, c in
                                 if i > 0 { Divider().overlay(Theme.hairline) }
@@ -69,7 +69,7 @@ private struct HubOverview: View {
                 }
                 let guides = cards.filter { $0.kind == .guide }
                 if !guides.isEmpty {
-                    section("指南", .guides) {
+                    section(String(localized: "指南"), .guides) {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(guides.prefix(5).enumerated()), id: \.element.id) { i, c in
                                 if i > 0 { Divider().overlay(Theme.hairline) }
@@ -78,10 +78,10 @@ private struct HubOverview: View {
                         }
                     }
                 }
-                grid("创意工坊", .workshop, cards.filter { $0.kind == .workshop })
-                grid("截图", .screenshots, cards.filter { $0.kind == .screenshot })
-                grid("艺术作品", .artwork, cards.filter { $0.kind == .artwork })
-                if cards.allSatisfy({ $0.kind == .news }) { CommunityNote(text: "社区暂时没有内容。") }
+                grid(String(localized: "创意工坊"), .workshop, cards.filter { $0.kind == .workshop })
+                grid(String(localized: "截图"), .screenshots, cards.filter { $0.kind == .screenshot })
+                grid(String(localized: "艺术作品"), .artwork, cards.filter { $0.kind == .artwork })
+                if cards.allSatisfy({ $0.kind == .news }) { CommunityNote(text: String(localized: "社区暂时没有内容。")) }
             }
         }
     }
@@ -128,7 +128,7 @@ private struct HubOverview: View {
                 if !c.excerpt.isEmpty { Text(c.excerpt).font(.system(size: 12)).foregroundStyle(Theme.tertiary).lineLimit(1) }
             }
             Spacer(minLength: 12)
-            MetaLine(parts: [c.author, c.comments.map { "\($0) 回复" } ?? ""], size: 11.5)
+            MetaLine(parts: [c.author, c.comments.map { String(localized: "\($0) 回复") } ?? ""], size: 11.5)
         }
         .padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }

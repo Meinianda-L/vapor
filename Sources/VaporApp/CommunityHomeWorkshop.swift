@@ -51,7 +51,7 @@ struct CommunityWorkshopTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                CommunityChips(items: [(false, "按名称"), (true, "最新")], selection: $recent)
+                CommunityChips(items: [(false, String(localized: "按名称")), (true, String(localized: "最新"))], selection: $recent)
                 Spacer()
                 if model.total > 0 { Text("\(model.total) 个游戏").font(.system(size: 12)).foregroundStyle(Theme.tertiary).monospacedDigit() }
             }

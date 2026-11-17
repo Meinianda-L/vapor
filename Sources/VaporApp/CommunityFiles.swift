@@ -7,12 +7,12 @@ enum CommunitySection {
     var section: String { self == .workshop ? "readytouseitems" : "guides" }
     var sorts: [(String, String)] {
         self == .workshop
-            ? [("trend", "热门"), ("mostrecent", "最新"), ("lastupdated", "最近更新"), ("totaluniquesubscribers", "订阅最多")]
-            : [("trend", "热门"), ("mostrecent", "最新"), ("toprated", "评分最高")]
+            ? [("trend", String(localized: "热门")), ("mostrecent", String(localized: "最新")), ("lastupdated", String(localized: "最近更新")), ("totaluniquesubscribers", String(localized: "订阅最多"))]
+            : [("trend", String(localized: "热门")), ("mostrecent", String(localized: "最新")), ("toprated", String(localized: "评分最高"))]
     }
 }
 
-private func starText(_ stars: Int?) -> String { stars.map { "\($0) 星" } ?? "" }
+private func starText(_ stars: Int?) -> String { stars.map { String(localized: "\($0) 星") } ?? "" }
 
 private func sizeText(_ bytes: Int64?) -> String {
     guard let bytes, bytes > 0 else { return "" }
@@ -34,13 +34,13 @@ struct SharedFileBrowser: View {
             HStack(alignment: .firstTextBaseline, spacing: 16) {
                 TextTabs(items: kind.sorts, selection: Binding(get: { query.sort }, set: { query.sort = $0; query.page = 1 }))
                 Spacer(minLength: 0)
-                CommunitySearchField(prompt: kind == .workshop ? "搜索创意工坊" : "搜索指南", text: $draft) {
+                CommunitySearchField(prompt: kind == .workshop ? String(localized: "搜索创意工坊") : String(localized: "搜索指南"), text: $draft) {
                     query.search = draft.trimmingCharacters(in: .whitespaces); query.page = 1
                 }
             }
             Loadable(id: query, load: loader(query)) { listing in
                 VStack(alignment: .leading, spacing: 14) {
-                    if listing.items.isEmpty { CommunityNote(text: "没有找到内容。") }
+                    if listing.items.isEmpty { CommunityNote(text: String(localized: "没有找到内容。")) }
                     if kind == .workshop {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 16, alignment: .top)], alignment: .leading, spacing: 20) {
                             ForEach(listing.items) { item in
@@ -110,10 +110,10 @@ struct MediaGrid: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            TextTabs(items: [(false, "热门"), (true, "最新")], selection: Binding(get: { query.recent }, set: { query = Query(recent: $0) }))
+            TextTabs(items: [(false, String(localized: "热门")), (true, String(localized: "最新"))], selection: Binding(get: { query.recent }, set: { query = Query(recent: $0) }))
             Loadable(id: query, load: loader(query)) { cards in
                 VStack(alignment: .leading, spacing: 14) {
-                    if cards.isEmpty { CommunityNote(text: "没有更多内容。") }
+                    if cards.isEmpty { CommunityNote(text: String(localized: "没有更多内容。")) }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 16, alignment: .top)], alignment: .leading, spacing: 20) {
                         ForEach(cards) { card in
                             Button { if let id = card.fileID { select(.file(id)) } } label: {
@@ -142,9 +142,14 @@ struct MediaGrid: View {
 struct SharedFileDetailView: View {
     let id: UInt64
     var open: (URL) -> Void = { _ in }
+    /// Replaces the native subscribe; by default the client's own workshop subscription is used.
     var subscribe: ((UInt64) -> Void)?
 
+    @EnvironmentObject private var engine: EngineModel
     @State private var section: String?
+    @State private var subscribed: Bool?
+    @State private var working = false
+    @State private var confirmUnsubscribe = false
 
     var body: some View {
         Loadable(id: id, load: loader) { file in
@@ -154,6 +159,7 @@ struct SharedFileDetailView: View {
                 case .guide: guide(file)
                 default: body(file)
                 }
+                if let thread = file.commentThread { CommentsSection(thread: thread, open: open).padding(.top, 8) }
             }
         }
         .id(id)
@@ -170,18 +176,39 @@ struct SharedFileDetailView: View {
     private func header(_ file: CommunityParsers.SharedFile) -> some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(file.title.isEmpty ? "截图" : file.title).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
+                Text(file.title.isEmpty ? String(localized: "截图") : file.title).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 MetaLine(parts: [file.coAuthors.isEmpty ? file.author : file.coAuthors, starText(file.stars), file.ratingNote], size: 12)
             }
             Spacer(minLength: 0)
-            if file.kind == .item {
-                Button("订阅") { subscribe?(id) ?? open(URL(string: "steam://url/CommunityFilePage/\(id)")!) }
-                    .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text)
-                    .padding(.horizontal, 16).padding(.vertical, 7)
-                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.hairline))
-            }
+            if file.kind == .item, let appid = file.appid { subscribeButton(appid) }
         }
+    }
+
+    private func subscribeButton(_ appid: UInt32) -> some View {
+        let on = subscribed == true
+        return Button(working ? "请稍候…" : on ? String(localized: "已订阅") : "订阅") {
+            if let subscribe { subscribe(id) } else if on { confirmUnsubscribe = true } else { Task { await setSubscribed(true, appid) } }
+        }
+        .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundStyle(on ? Theme.secondary : Theme.text)
+        .padding(.horizontal, 16).padding(.vertical, 7)
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.hairline))
+        .disabled(working || (subscribe == nil && (subscribed == nil || !engine.uiOnline)))
+        .confirmationDialog("取消订阅这个创意工坊物品？", isPresented: $confirmUnsubscribe) {
+            Button("取消订阅", role: .destructive) { Task { await setSubscribed(false, appid) } }
+        }
+        .task(id: id) {
+            guard subscribe == nil, engine.uiOnline else { return }
+            let ui = engine.ui, item = id
+            let found = try? await ui.subscribedWorkshopItems(appid: appid, ids: [item])
+            if !Task.isCancelled { subscribed = found.map { $0.contains(item) } }
+        }
+    }
+
+    private func setSubscribed(_ on: Bool, _ appid: UInt32) async {
+        working = true
+        defer { working = false }
+        if (try? await engine.ui.setWorkshopSubscription(id, appid: appid, subscribed: on)) != nil { subscribed = on }
     }
 
     private func stats(_ file: CommunityParsers.SharedFile) -> some View {
@@ -217,8 +244,8 @@ struct SharedFileDetailView: View {
         let current = file.sections.first { $0.id == section }
         return HStack(alignment: .top, spacing: 32) {
             VStack(alignment: .leading, spacing: 2) {
-                SectionLabel(text: "目录").padding(.bottom, 6)
-                tocRow("总览", on: current == nil) { section = nil }
+                SectionLabel(text: String(localized: "目录")).padding(.bottom, 6)
+                tocRow(String(localized: "总览"), on: current == nil) { section = nil }
                 ForEach(file.sections) { s in tocRow(s.title, on: s.id == current?.id) { section = s.id } }
                 Divider().overlay(Theme.hairline).padding(.vertical, 12)
                 stats(file)
@@ -268,7 +295,7 @@ struct GuidesView: View {
     @State private var detail: CommunityDetail?
 
     var body: some View {
-        CommunityFrame(title: detail == nil ? "指南" : nil, back: detail == nil ? "返回" : "指南列表", open: open,
+        CommunityFrame(title: detail == nil ? String(localized: "指南") : nil, back: detail == nil ? String(localized: "返回") : String(localized: "指南列表"), open: open,
                        onBack: { if detail == nil { onClose() } else { detail = nil } }) {
             if let detail { CommunityDetailHost(appid: appid, detail: detail, open: open, subscribe: nil) }
             else { SharedFileBrowser(appid: appid, kind: .guides) { detail = $0 } }
@@ -285,7 +312,7 @@ struct WorkshopView: View {
     @State private var detail: CommunityDetail?
 
     var body: some View {
-        CommunityFrame(title: detail == nil ? "创意工坊" : nil, back: detail == nil ? "返回" : "创意工坊", open: open,
+        CommunityFrame(title: detail == nil ? String(localized: "创意工坊") : nil, back: detail == nil ? String(localized: "返回") : String(localized: "创意工坊"), open: open,
                        onBack: { if detail == nil { onClose() } else { detail = nil } }) {
             if let detail { CommunityDetailHost(appid: appid, detail: detail, open: open, subscribe: subscribe) }
             else { SharedFileBrowser(appid: appid, kind: .workshop) { detail = $0 } }

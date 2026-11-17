@@ -28,16 +28,16 @@ struct CommunityMarketTab: View {
     private var list: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline, spacing: 16) {
-                CommunityChips(items: [(UInt32?.none, "全部游戏")] + MarketClient.games.map { (UInt32?.some($0.appid), $0.name) },
+                CommunityChips(items: [(UInt32?.none, String(localized: "全部游戏"))] + MarketClient.games.map { (UInt32?.some($0.appid), $0.name) },
                                selection: Binding(get: { query.appid }, set: { query = Query(appid: $0, text: query.text) }))
                 Spacer(minLength: 0)
-                CommunitySearchField(prompt: "搜索市场物品", text: $draft) {
+                CommunitySearchField(prompt: String(localized: "搜索市场物品"), text: $draft) {
                     query = Query(appid: query.appid, text: draft.trimmingCharacters(in: .whitespaces))
                 }
             }
             Loadable(id: query, rows: 10, load: loader(query)) { page in
                 VStack(alignment: .leading, spacing: 0) {
-                    if page.items.isEmpty { CommunityNote(text: "没有找到物品。") }
+                    if page.items.isEmpty { CommunityNote(text: String(localized: "没有找到物品。")) }
                     ForEach(Array(page.items.enumerated()), id: \.element.id) { i, it in
                         if i > 0 { Divider().overlay(Theme.hairline) }
                         Button { item = it } label: { row(it) }.buttonStyle(.plain)
@@ -99,10 +99,10 @@ private struct MarketItemView: View {
                 }
                 Loadable(id: item.id, rows: 3, load: loader) { price in
                     VStack(alignment: .leading, spacing: 14) {
-                        stat("最低售价", price.lowest ?? "—")
-                        stat("中位价格", price.median ?? "—")
-                        stat("24 小时成交量", price.volume.map { "\($0) 件" } ?? "—")
-                        stat("在售数量", "\(item.sellListings.formatted()) 件")
+                        stat(String(localized: "最低售价"), price.lowest ?? "—")
+                        stat(String(localized: "中位价格"), price.median ?? "—")
+                        stat(String(localized: "24 小时成交量"), price.volume.map { String(localized: "\($0) 件") } ?? "—")
+                        stat(String(localized: "在售数量"), String(localized: "\(item.sellListings.formatted()) 件"))
                     }
                 }
             }

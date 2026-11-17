@@ -31,7 +31,7 @@ struct NotificationsButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(engine.strings("ViewNotifications") ?? "通知")
+        .help(engine.strings("ViewNotifications") ?? String(localized: "通知"))
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             NotificationsList(open: { url in shown = false; open(url) })
                 .environmentObject(engine)
@@ -48,7 +48,7 @@ private struct NotificationsList: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(engine.strings("QuickAccess_Tab_Notifications_Title") ?? "通知")
+                Text(engine.strings("QuickAccess_Tab_Notifications_Title") ?? String(localized: "通知"))
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
                 Spacer()
             }
@@ -82,7 +82,7 @@ private struct NotificationsList: View {
             }
             .frame(maxHeight: 360)
         } else {
-            Text(items == nil && !failed ? "" : failed ? "无法读取通知" : (engine.strings("QuickAccess_Tab_Notifications_None") ?? "没有新通知"))
+            Text(items == nil && !failed ? "" : failed ? String(localized: "无法读取通知") : (engine.strings("QuickAccess_Tab_Notifications_None") ?? String(localized: "没有新通知")))
                 .font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 .frame(maxWidth: .infinity).frame(height: 96)
         }
@@ -209,25 +209,25 @@ extension SteamUI.Notification {
         func name(_ id: UInt32?) -> String? { id.map { engine.steamApps[$0]?.name ?? "App \($0)" } }
         switch kind {
         case .gift:
-            return engine.strings("Notification_GiftReceived_Body") ?? "你收到了一件礼物"
+            return engine.strings("Notification_GiftReceived_Body") ?? String(localized: "你收到了一件礼物")
         case .comment:
-            return "你收到了 \(count) 条新评论"
+            return String(localized: "你收到了 \(count) 条新评论")
         case .item:
-            let source = name(appid("source_appid")).map { "（来自 \($0)）" } ?? ""
-            return "你获得了 \(count) 件新物品\(source)"
+            let source = name(appid("source_appid")).map { String(localized: "（来自 \($0)）") } ?? ""
+            return String(localized: "你获得了 \(count) 件新物品\(source)")
         case .friendInvite:
             return engine.strings("Notification_FriendInviteRollup_Body")?.replacingOccurrences(of: "%1$s", with: "\(count)")
-                ?? "你收到了 \(count) 份新好友请求"
+                ?? String(localized: "你收到了 \(count) 份新好友请求")
         case .majorSale:
-            return "Steam 促销活动已开始"
+            return String(localized: "Steam 促销活动已开始")
         case .preload:
-            return name(appid("app_id", "appid")).map { "\($0) 已预载完成" } ?? "游戏预载已完成"
+            return name(appid("app_id", "appid")).map { String(localized: "\($0) 已预载完成") } ?? String(localized: "游戏预载已完成")
         case .wishlist:
-            return name(appid("app_id", "appid")).map { "愿望单中的 \($0) 正在特惠" } ?? "愿望单中有游戏正在特惠"
+            return name(appid("app_id", "appid")).map { String(localized: "愿望单中的 \($0) 正在特惠") } ?? String(localized: "愿望单中有游戏正在特惠")
         case .tradeOffer:
-            return "你收到了 \(count) 个新的交易报价"
+            return String(localized: "你收到了 \(count) 个新的交易报价")
         case nil:
-            return "Steam 通知"
+            return String(localized: "Steam 通知")
         }
     }
 }

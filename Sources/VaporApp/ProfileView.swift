@@ -11,10 +11,12 @@ struct ProfileView: View {
     var openGame: (UInt32) -> Void = { _ in }
     var onClose: () -> Void = {}
     var openChat: ((String) -> Void)?
+    var startEditing = false
 
     private enum Phase { case loading, loaded(ProfileData), failed }
     @State private var phase: Phase = .loading
     @State private var friend: SteamUI.Friend?
+    @State private var editing = false
 
     private var isOwn: Bool { engine.account?.steamID == steamID }
     private var profileURL: URL? { URL(string: "https://steamcommunity.com/profiles/\(steamID)/") }
@@ -49,6 +51,7 @@ struct ProfileView: View {
                     }
                     if !data.games.isEmpty { gamesSection(data.games) }
                     if !data.groups.isEmpty { groupsSection(data.groups) }
+                    if data.isPublic || isOwn { CommentsSection(thread: .profile(steamID), open: open) }
                 }
             }
             .frame(maxWidth: 920, alignment: .leading)
@@ -58,6 +61,10 @@ struct ProfileView: View {
         .background(Theme.background)
         .environment(\.openURL, OpenURLAction { url in open(url); return .handled })
         .task(id: steamID) { await load(force: false) }
+        .sheet(isPresented: $editing) {
+            ProfileEditSheet(steamID: steamID, saved: { Task { await load(force: true) } }, dismiss: { editing = false })
+        }
+        .onAppear { if startEditing && isOwn { editing = true } }
     }
 
     // MARK: header
@@ -77,7 +84,7 @@ struct ProfileView: View {
                 }
                 if let data {
                     MetaLine(parts: [data.isPublic ? data.realName : "", data.isPublic ? data.location : "",
-                                     data.memberSince.map { "加入于 \($0)" } ?? ""], size: 12)
+                                     data.memberSince.map { String(localized: "加入于 \($0)") } ?? ""], size: 12)
                 }
             }
             Spacer(minLength: 0)
@@ -101,17 +108,17 @@ struct ProfileView: View {
             }
         }
         guard let state else { return nil }
-        if !game.isEmpty { return ("正在游戏 · \(game)", Theme.ok) }
+        if !game.isEmpty { return (String(localized: "正在游戏 · \(game)"), Theme.ok) }
         switch state {
-        case 1, 5, 6: return ("在线", Theme.ok)
-        case 2: return ("忙碌", Theme.warn)
-        case 3, 4: return ("离开", Theme.warn)
+        case 1, 5, 6: return (String(localized: "在线"), Theme.ok)
+        case 2: return (String(localized: "忙碌"), Theme.warn)
+        case 3, 4: return (String(localized: "离开"), Theme.warn)
         default:
             if let last = friend?.lastOnline, last > 0 {
                 let ago = Self.relative.localizedString(for: Date(timeIntervalSince1970: TimeInterval(last)), relativeTo: Date())
-                return ("离线 · 最后在线 \(ago)", Theme.tertiary)
+                return (String(localized: "离线 · 最后在线 \(ago)"), Theme.tertiary)
             }
-            return ("离线", Theme.tertiary)
+            return (String(localized: "离线"), Theme.tertiary)
         }
     }
 
@@ -126,10 +133,10 @@ struct ProfileView: View {
 
     private var actions: some View {
         HStack(spacing: 20) {
-            if friend != nil, let openChat { link("发送消息") { openChat(steamID) } }
-            link("在 Steam 社区中打开") { if let profileURL { open(profileURL) } }
-            link("查看库存") { if let url = profileURL?.appendingPathComponent("inventory") { open(url) } }
-            if isOwn { link("编辑个人资料") { if let url = profileURL?.appendingPathComponent("edit/info") { open(url) } } }
+            if friend != nil, let openChat { link(String(localized: "发送消息")) { openChat(steamID) } }
+            link(String(localized: "在 Steam 社区中打开")) { if let profileURL { open(profileURL) } }
+            link(String(localized: "查看库存")) { if let url = profileURL?.appendingPathComponent("inventory") { open(url) } }
+            if isOwn { link(String(localized: "编辑个人资料")) { editing = true } }
         }
     }
 
@@ -142,7 +149,7 @@ struct ProfileView: View {
 
     private func gamesSection(_ games: [ProfileData.Game]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "最近游戏")
+            SectionLabel(text: String(localized: "最近游戏"))
             VStack(spacing: 0) {
                 ForEach(Array(games.enumerated()), id: \.offset) { i, game in
                     if i > 0 { Divider().overlay(Theme.hairline) }
@@ -168,7 +175,7 @@ struct ProfileView: View {
 
     private func groupsSection(_ groups: [ProfileData.Group]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "群组")
+            SectionLabel(text: String(localized: "群组"))
             VStack(spacing: 0) {
                 ForEach(Array(groups.enumerated()), id: \.offset) { i, group in
                     if i > 0 { Divider().overlay(Theme.hairline) }
@@ -230,8 +237,8 @@ struct ProfileData: Sendable {
 
         var hoursText: String {
             let recentValue = Double(recent.replacingOccurrences(of: ",", with: "")) ?? 0
-            let totalText = total.isEmpty ? "" : "总计 \(total) 小时"
-            return recentValue > 0 ? "近两周 \(recent) 小时  ·  \(totalText)" : totalText
+            let totalText = total.isEmpty ? "" : String(localized: "总计 \(total) 小时")
+            return recentValue > 0 ? String(localized: "近两周 \(recent) 小时  ·  \(totalText)") : totalText
         }
     }
 

@@ -34,9 +34,10 @@ enum CommunitySession {
 
 func communityWeb(_ url: URL) -> Bool { url.scheme == "http" || url.scheme == "https" }
 
-/// Author links only go native for profiles Vapor can draw; vanity URLs would end up on the web.
+/// Author links that lead to a profile; vanity URLs are resolved to an id by the page they open.
 func communityProfile(_ url: URL?) -> URL? {
-    guard let url, url.host?.hasSuffix("steamcommunity.com") == true, url.path.hasPrefix("/profiles/") else { return nil }
+    guard let url, url.host?.hasSuffix("steamcommunity.com") == true,
+          url.path.hasPrefix("/profiles/") || url.path.hasPrefix("/id/") else { return nil }
     return url
 }
 
@@ -44,7 +45,7 @@ func communityProfile(_ url: URL?) -> URL? {
 
 struct CommunityFrame<Accessory: View, Content: View>: View {
     var title: String?
-    var back = "返回"
+    var back = String(localized: "返回")
     var open: (URL) -> Void
     var onBack: () -> Void
     @ViewBuilder var accessory: Accessory
@@ -80,7 +81,7 @@ struct CommunityFrame<Accessory: View, Content: View>: View {
 }
 
 extension CommunityFrame where Accessory == EmptyView {
-    init(title: String?, back: String = "返回", open: @escaping (URL) -> Void, onBack: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+    init(title: String?, back: String = String(localized: "返回"), open: @escaping (URL) -> Void, onBack: @escaping () -> Void, @ViewBuilder content: () -> Content) {
         self.init(title: title, back: back, open: open, onBack: onBack, accessory: { EmptyView() }, content: content)
     }
 }
@@ -194,7 +195,7 @@ struct CommunityPager: View {
         let last = pageCount.map { page >= $0 } ?? !hasNext
         HStack(spacing: 20) {
             Button("‹ 上一页") { go(page - 1) }.disabled(page <= 1)
-            Text(pageCount.map { "第 \(page) 页，共 \($0) 页" } ?? "第 \(page) 页")
+            Text(pageCount.map { "第 \(page) 页，共 \($0) 页" } ?? String(localized: "第 \(page) 页"))
                 .foregroundStyle(Theme.secondary).monospacedDigit()
             Button("下一页 ›") { go(page + 1) }.disabled(last)
         }
@@ -354,7 +355,7 @@ struct RichBlocksView: View {
                 .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         case .video(let url):
             HStack {
-                Text(url.host?.contains("youtube") == true ? "YouTube 视频" : "视频").font(.system(size: 13)).foregroundStyle(Theme.text)
+                Text(url.host?.contains("youtube") == true ? "YouTube 视频" : String(localized: "视频")).font(.system(size: 13)).foregroundStyle(Theme.text)
                 Spacer()
                 Button("在浏览器中观看") { openURL(url) }.buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Theme.accent)
             }

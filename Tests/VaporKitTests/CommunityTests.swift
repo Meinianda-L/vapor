@@ -196,3 +196,101 @@ final class CommunityTests: XCTestCase {
         XCTAssertEqual(r.cursor, "abc")
     }
 }
+
+final class CommunityLeftoverTests: XCTestCase {
+    func testVanityAndMyPages() {
+        func page(_ s: String) -> CommunityPage? { CommunityPage.page(for: URL(string: s)!) }
+        XCTAssertEqual(page("https://steamcommunity.com/id/gaben"), .user(.vanity("gaben"), .profile))
+        XCTAssertEqual(page("https://steamcommunity.com/id/gaben/inventory/#730_2"), .user(.vanity("gaben"), .inventory(appid: 730)))
+        XCTAssertEqual(page("https://steamcommunity.com/my/"), .user(.me, .profile))
+        XCTAssertEqual(page("https://steamcommunity.com/my/tradeoffers/sent"), .user(.me, .tradeOffers(sent: true)))
+        XCTAssertEqual(page("https://steamcommunity.com/my/commentnotifications/"), .user(.me, .profile))
+        XCTAssertEqual(page("https://steamcommunity.com/profiles/76561198735163279/edit/info"), .user(.id("76561198735163279"), .editProfile))
+        XCTAssertEqual(page("https://steamcommunity.com/profiles/76561198735163279/tradeoffers/"), .user(.id("76561198735163279"), .tradeOffers(sent: false)))
+        XCTAssertNil(page("https://steamcommunity.com/id/gaben/friends"))
+        XCTAssertNil(page("https://steamcommunity.com/my/friends/pending"))
+    }
+
+    func testVanityXML() {
+        XCTAssertEqual(VanityResolver.steamID(xml: "<profile><steamID64>76561197960287930</steamID64><steamID><![CDATA[x]]></steamID></profile>"), "76561197960287930")
+        XCTAssertNil(VanityResolver.steamID(xml: "<response><error><![CDATA[The specified profile could not be found.]]></error></response>"))
+        XCTAssertEqual(VanityResolver.url("a b")?.absoluteString, "https://steamcommunity.com/id/a%20b/?xml=1")
+    }
+
+    func testCommentThreadAndPage() {
+        let html = #"""
+        <script>InitializeCommentThread( "PublishedFile_Public", "PublishedFile_Public_76561199085568010_3005262277", {"feature":"3005262277","feature2":-1,"owner":"76561199085568010","commentthreadid":"514147734","total_count":2,"start":0,"pagesize":10,"extended_data":"{\"appid\":620}"}, 'https://steamcommunity.com/comment/PublishedFile_Public/', 40 );</script>
+        """#
+        let thread = CommentParsers.thread(html: html)
+        XCTAssertEqual(thread, CommentThread(type: "PublishedFile_Public", owner: "76561199085568010", feature: "3005262277", feature2: "-1", total: 2, extendedData: #"{"appid":620}"#))
+        XCTAssertEqual(thread?.renderURL.absoluteString, "https://steamcommunity.com/comment/PublishedFile_Public/render/76561199085568010/3005262277/")
+        XCTAssertEqual(thread?.postURL.absoluteString, "https://steamcommunity.com/comment/PublishedFile_Public/post/76561199085568010/3005262277/")
+        XCTAssertEqual(CommentThread.profile("7656").renderURL.absoluteString, "https://steamcommunity.com/comment/Profile/render/7656/-1/")
+
+        let comments = #"""
+        <div class="commentthread_comment responsive_body_text" id="comment_690868475627982909"><div class="commentthread_comment_content">
+          <div class="commentthread_comment_author"><div class="commentthread_comment_avatar playerAvatar offline">
+            <a href="https://steamcommunity.com/id/cat" data-miniprofile="1142787040"><picture><img srcset="https://shared.akamai.steamstatic.com/a.gif"></picture></a></div>
+            <div class="author_name_group"><a class="hoverunderline commentthread_author_link" href="https://steamcommunity.com/id/cat" data-miniprofile="1142787040"><bdi>Robert the cat</bdi></a>
+            <div class="commentthread_comment_timestamp" title="x" data-timestamp="1764537875">2025 年 11 月 30 日</div></div></div>
+          <div class="commentthread_comment_text" id="comment_content_690868475627982909">Nice <img src="https://community.akamai.steamstatic.com/economy/emoticon/steamthumbsup" alt=":steamthumbsup:" class="emoticon"></div></div></div>
+        """#
+        let json = try! JSONSerialization.data(withJSONObject: ["success": true, "start": 0, "pagesize": "10", "total_count": 23, "comments_html": comments] as [String: Any])
+        let page = CommentParsers.page(json: json)
+        XCTAssertEqual(page?.total, 23)
+        XCTAssertEqual(page?.pageCount, 3)
+        XCTAssertEqual(page?.comments.count, 1)
+        let c = page?.comments.first
+        XCTAssertEqual(c?.id, "690868475627982909")
+        XCTAssertEqual(c?.author, "Robert the cat")
+        XCTAssertEqual(c?.authorURL, URL(string: "https://steamcommunity.com/id/cat"))
+        XCTAssertEqual(c?.avatar, URL(string: "https://shared.akamai.steamstatic.com/a.gif"))
+        XCTAssertEqual(c?.date, Date(timeIntervalSince1970: 1764537875))
+        XCTAssertEqual(c?.blocks.first?.plain, "Nice :steamthumbsup:")
+        XCTAssertNil(CommentParsers.postError(json: Data(#"{"success":true}"#.utf8)))
+        XCTAssertEqual(CommentParsers.postError(json: Data(#"{"success":false,"error":"too fast"}"#.utf8)), "too fast")
+    }
+
+    func testTradeOffers() {
+        let html = """
+        <div class="tradeoffer" id="tradeofferid_42"><div class="tradeoffer_items_ctn active">
+          <div class="tradeoffer_header">Bob 向您发送了一个交易请求</div>
+          <div class="tradeoffer_partner"><div class="playerAvatar online" data-miniprofile="1000"><img src="https://avatars.akamai.steamstatic.com/x.jpg"></div></div>
+          <div class="tradeoffer_items primary"><div class="tradeoffer_items_header">对方将提供：</div><div class="tradeoffer_item_list">
+            <div class="trade_item"><img src="https://community.akamai.steamstatic.com/economy/image/a/96fx96f" alt="Key"></div></div></div>
+          <div class="tradeoffer_items secondary"><div class="tradeoffer_items_header">您将提供：</div><div class="tradeoffer_item_list"></div></div>
+          <div class="tradeoffer_message"><div class="quote">hi</div></div></div></div>
+        """
+        let list = TradeOfferParser.list(html: html)
+        XCTAssertEqual(list.offers.count, 1)
+        XCTAssertEqual(list.offers[0].id, "42")
+        XCTAssertEqual(list.offers[0].partnerID, "76561197960266728")
+        XCTAssertEqual(list.offers[0].sides.map(\.items.count), [1, 0])
+        XCTAssertEqual(list.offers[0].sides[0].items[0].title, "Key")
+        XCTAssertEqual(list.offers[0].message, "hi")
+        let empty = TradeOfferParser.list(html: #"<div class="tradeoffer_welcome_ctn"><h2>您目前没有收到任何交易请求。</h2></div>"#)
+        XCTAssertTrue(empty.offers.isEmpty)
+        XCTAssertEqual(empty.emptyNote, "您目前没有收到任何交易请求。")
+    }
+
+    func testProfileEditData() {
+        let json = #"{"strPersonaName":"Me","strCustomURL":"","strRealName":"R","strSummary":"hi","LocationData":{"locCountry":"China","locCountryCode":"CN","locState":"Beijing","locStateCode":"22","locCity":"","locCityCode":""},"ProfilePreferences":{"hide_profile_awards":0}}"#
+        let escaped = json.replacingOccurrences(of: "\"", with: "&quot;")
+        let data = ProfileEditData.parse(html: "<div id=\"profile_edit_config\" data-profile-edit=\"\(escaped)\"></div>")
+        XCTAssertEqual(data?.personaName, "Me")
+        XCTAssertEqual(data?.countryCode, "CN")
+        XCTAssertEqual(data?.stateCode, "22")
+        XCTAssertEqual(data?.hideProfileAwards, false)
+        let rows = ProfileEditParsers.locations(json: Data(#"[{"countrycode":"CN","hasstates":1,"countryname":"China"},{"countrycode":"CN","statecode":"01","statename":"Anhui"},{"cityid":5,"cityname":"X"}]"#.utf8))
+        XCTAssertEqual(rows.map(\.code), ["CN", "01", "5"])
+        XCTAssertNil(ProfileEditParsers.saveError(json: Data(#"{"success":1}"#.utf8)))
+        XCTAssertEqual(ProfileEditParsers.saveError(json: Data(#"{"success":0,"errmsg":"<b>Too long</b>"}"#.utf8)), "Too long")
+    }
+
+    func testPointsAndSubscriptionParsing() {
+        let summary = SteamUI.parsePoints(Data(#"{"summary":{"points":"1200","points_earned":"2000","points_spent":"800"}}"#.utf8))
+        XCTAssertEqual(summary, SteamUI.PointsSummary(points: 1200, earned: 2000, spent: 800))
+        let set = SteamUI.parseInList(Data(#"{"files":[{"publishedfileid":"5","inlist":true},{"publishedfileid":"6","inlist":false}]}"#.utf8))
+        XCTAssertEqual(set, [5])
+    }
+}

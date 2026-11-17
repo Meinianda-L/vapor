@@ -45,8 +45,8 @@ struct NativeWindowSheet: View {
 
     /// Wine draws message box buttons in English; the standard ones get the Mac's Chinese wording.
     static func label(_ b: NativeWindow.Button, in window: NativeWindow) -> String {
-        let standard = [1: ("ok", "确定"), 2: ("cancel", "取消"), 3: ("abort", "中止"), 4: ("retry", "重试"),
-                        5: ("ignore", "忽略"), 6: ("yes", "是"), 7: ("no", "否"), 10: ("try again", "重试"), 11: ("continue", "继续")]
+        let standard = [1: ("ok", String(localized: "确定")), 2: ("cancel", String(localized: "取消")), 3: ("abort", String(localized: "中止")), 4: ("retry", String(localized: "重试")),
+                        5: ("ignore", String(localized: "忽略")), 6: ("yes", String(localized: "是")), 7: ("no", String(localized: "否")), 10: ("try again", String(localized: "重试")), 11: ("continue", String(localized: "继续"))]
         if let (english, chinese) = standard[b.command], b.label.lowercased() == english { return chinese }
         return b.label
     }

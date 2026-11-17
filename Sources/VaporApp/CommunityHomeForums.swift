@@ -27,8 +27,8 @@ struct CommunityForumsTab: View {
             } else {
                 Loadable(id: 0, rows: 8, load: { try await Self.loadIndex() }) { index in
                     VStack(alignment: .leading, spacing: 30) {
-                        section("Steam 论坛", index.forums)
-                        section("Steam 功能与社区", index.groups)
+                        section(String(localized: "Steam 论坛"), index.forums)
+                        section(String(localized: "Steam 功能与社区"), index.groups)
                     }
                 }
             }
@@ -37,7 +37,7 @@ struct CommunityForumsTab: View {
 
     private var backTitle: String {
         if case .forum? = backStack.last { return "论坛" }
-        return backStack.isEmpty ? "讨论" : "返回"
+        return backStack.isEmpty ? String(localized: "讨论") : String(localized: "返回")
     }
 
     private func push(_ next: Route) {
@@ -94,7 +94,7 @@ private struct ForumTopics: View {
             Text(name).font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.text)
             Loadable(id: page, rows: 8, load: loader(page)) { listing in
                 VStack(alignment: .leading, spacing: 0) {
-                    if listing.topics.isEmpty { CommunityNote(text: "这个论坛还没有主题。") }
+                    if listing.topics.isEmpty { CommunityNote(text: String(localized: "这个论坛还没有主题。")) }
                     ForEach(Array(listing.topics.enumerated()), id: \.element.id) { i, topic in
                         if i > 0 { Divider().overlay(Theme.hairline) }
                         Button { select(topic.url) } label: { row(topic) }.buttonStyle(.plain)
@@ -117,7 +117,7 @@ private struct ForumTopics: View {
                     if topic.pinned { Text("置顶").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary) }
                     Text(topic.title).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.text).lineLimit(2).multilineTextAlignment(.leading)
                 }
-                MetaLine(parts: [topic.author, topic.lastPost.map { "最后回复 \(CommunityTime.string($0))" } ?? ""], size: 11.5)
+                MetaLine(parts: [topic.author, topic.lastPost.map { String(localized: "最后回复 \(CommunityTime.string($0))") } ?? ""], size: 11.5)
             }
             Spacer(minLength: 12)
             Text("\(topic.replies) 回复").font(.system(size: 12)).foregroundStyle(Theme.secondary).monospacedDigit()

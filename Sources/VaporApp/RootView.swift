@@ -95,6 +95,11 @@ final class AppState: ObservableObject {
     /// other Steam pages, the default browser for anything else. A URL for the page already on screen
     /// (its "open in Steam" link) goes to the web panel.
     func open(_ url: URL) {
+        // Pending friend requests are on the friends screen.
+        if SteamLink.isSteamWeb(url), url.host?.lowercased() == "steamcommunity.com", Array(url.pathComponents.dropFirst().prefix(2)) == ["my", "friends"] {
+            go(.friends)
+            return
+        }
         if let page = NativePage(url), page != pages.last {
             web.close()
             pages.append(page)
@@ -368,7 +373,7 @@ struct Sidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             group("Steam", [.store, .community, .downloads, .friends], counts: false)
-            group("游戏库", [.all, .installed, .windows, .mac] + collections + (hasHidden ? [.hidden] : []), counts: true)
+            group(String(localized: "游戏库"), [.all, .installed, .windows, .mac] + collections + (hasHidden ? [.hidden] : []), counts: true)
             group("Vapor", [.runtimes, .settings], counts: false)
             Spacer()
             AccountMenu(openProfile: { state.show(.profile($0)) },

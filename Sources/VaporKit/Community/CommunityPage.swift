@@ -28,6 +28,21 @@ public enum CommunityTab: String, CaseIterable, Sendable, Hashable {
     }
 }
 
+/// Who a community link is about.
+public enum UserRef: Hashable, Sendable {
+    case id(String)
+    case vanity(String)
+    /// `/my/…`: the signed-in account.
+    case me
+}
+
+public enum UserSection: Hashable, Sendable {
+    case profile
+    case editProfile
+    case inventory(appid: UInt32?)
+    case tradeOffers(sent: Bool)
+}
+
 /// A native destination for a Steam community link.
 public enum CommunityPage: Hashable, Sendable {
     case hub(appid: UInt32, tab: CommunityTab)
@@ -39,6 +54,8 @@ public enum CommunityPage: Hashable, Sendable {
     case sharedFile(id: UInt64)
     case inventory(steamID: String, appid: UInt32?)
     case pointsShop(appid: UInt32)
+    /// A page of a user named by vanity URL, by id, or as "my": needs `VanityResolver` / the signed-in account to become an id.
+    case user(UserRef, UserSection)
 
     /// Recognises the Steam web addresses that have a native page; nil for everything else.
     public static func page(for url: URL) -> CommunityPage? {
@@ -88,12 +105,33 @@ public enum CommunityPage: Hashable, Sendable {
             if head == "workshop", parts[1] == "discussions", let appid = q("appid").flatMap(UInt32.init) { return .discussions(appid: appid, forum: url, topic: nil) }
             return nil
         case "profiles":
-            guard parts.count >= 3, parts[2] == "inventory", parts[1].count == 17, parts[1].allSatisfy(\.isNumber) else { return nil }
-            var appid: UInt32?
-            if let frag = url.fragment, let first = frag.split(separator: "_").first { appid = UInt32(first) }
-            return .inventory(steamID: parts[1], appid: appid)
+            guard parts.count >= 3, parts[1].count == 17, parts[1].allSatisfy(\.isNumber) else { return nil }
+            if parts[2] == "inventory" { return .inventory(steamID: parts[1], appid: inventoryApp(url)) }
+            return userSection(parts.dropFirst(2), url).map { .user(.id(parts[1]), $0) }
+        case "id":
+            guard parts.count >= 2 else { return nil }
+            let rest = parts.dropFirst(2)
+            return userSection(rest, url).map { .user(.vanity(parts[1]), $0) }
+        case "my":
+            return userSection(parts.dropFirst(), url).map { .user(.me, $0) }
         default:
             return nil
+        }
+    }
+
+    private static func inventoryApp(_ url: URL) -> UInt32? {
+        url.fragment.flatMap { $0.split(separator: "_").first }.flatMap { UInt32($0) }
+    }
+
+    /// What follows /id/<name>/, /my/ or /profiles/<id>/ . Pages Vapor has no screen for (friends, games …) give nil.
+    private static func userSection(_ rest: ArraySlice<String>, _ url: URL) -> UserSection? {
+        guard let first = rest.first else { return .profile }
+        switch first {
+        case "inventory": return .inventory(appid: inventoryApp(url))
+        case "tradeoffers": return .tradeOffers(sent: rest.dropFirst().first == "sent")
+        case "edit": return .editProfile
+        case "commentnotifications", "home", "profile": return .profile
+        default: return nil
         }
     }
 }

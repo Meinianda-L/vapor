@@ -11,10 +11,10 @@ struct InventoryView: View {
     @State private var context: String?
 
     var body: some View {
-        CommunityFrame(title: "库存", open: open, onBack: onClose) {
+        CommunityFrame(title: String(localized: "库存"), open: open, onBack: onClose) {
             Loadable(id: steamID, load: appsLoader) { apps in
                 if apps.isEmpty {
-                    CommunityNote(text: "没有可显示的库存。库存为私密，或还没有任何带库存的游戏。")
+                    CommunityNote(text: String(localized: "没有可显示的库存。库存为私密，或还没有任何带库存的游戏。"))
                 } else {
                     let current = apps.first { $0.appid == (selectedApp ?? appid) } ?? apps[0]
                     HStack(alignment: .top, spacing: 28) {
@@ -77,7 +77,7 @@ private struct InventoryItems: View {
                 } else if !started {
                     CommunitySkeleton(rows: 4)
                 } else if items.isEmpty {
-                    CommunityNote(text: "这个库存是空的。")
+                    CommunityNote(text: String(localized: "这个库存是空的。"))
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 92, maximum: 110), spacing: 10, alignment: .top)], alignment: .leading, spacing: 12) {
                     ForEach(items) { item in
@@ -85,7 +85,7 @@ private struct InventoryItems: View {
                     }
                 }
                 if next != nil {
-                    Button(more ? "正在加载…" : "加载更多") { Task { await load(reset: false) } }
+                    Button(more ? "正在加载…" : String(localized: "加载更多")) { Task { await load(reset: false) } }
                         .buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Theme.text).disabled(more)
                 }
             }
@@ -137,7 +137,7 @@ private struct InventoryItems: View {
                 Text(l).font(.system(size: 12)).foregroundStyle(Theme.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
             }
             if !item.tags.isEmpty { Text(item.tags.joined(separator: "、")).font(.system(size: 11.5)).foregroundStyle(Theme.tertiary) }
-            MetaLine(parts: [item.tradable ? "可交易" : "不可交易", item.marketable ? "可上架市场" : "不可上架市场"], size: 11.5)
+            MetaLine(parts: [item.tradable ? String(localized: "可交易") : String(localized: "不可交易"), item.marketable ? String(localized: "可上架市场") : String(localized: "不可上架市场")], size: 11.5)
         }
         .frame(width: 220, alignment: .leading)
     }

@@ -10,11 +10,11 @@ struct CommunityHomeView: View {
         case home, discussions, workshop, market, activity
         var title: String {
             switch self {
-            case .home: return "主页"
-            case .discussions: return "讨论"
-            case .workshop: return "创意工坊"
-            case .market: return "市场"
-            case .activity: return "动态"
+            case .home: return String(localized: "主页")
+            case .discussions: return String(localized: "讨论")
+            case .workshop: return String(localized: "创意工坊")
+            case .market: return String(localized: "市场")
+            case .activity: return String(localized: "动态")
             }
         }
     }
@@ -104,7 +104,7 @@ struct CommunityMoreButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Text(busy ? "载入中…" : "查看更多").font(.system(size: 12.5)).foregroundStyle(Theme.text)
+            Text(busy ? "载入中…" : String(localized: "查看更多")).font(.system(size: 12.5)).foregroundStyle(Theme.text)
         }
         .buttonStyle(.plain).disabled(busy).padding(.vertical, 8)
     }

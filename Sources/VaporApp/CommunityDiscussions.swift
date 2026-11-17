@@ -29,7 +29,7 @@ struct DiscussionsList: View {
                     get: { query.forum ?? forums.first { $0.selected }?.url ?? forums.first?.url ?? CommunityClient.defaultForum(appid) },
                     set: { query = Query(forum: $0); draft = "" }))
                 Spacer(minLength: 0)
-                CommunitySearchField(prompt: "搜索讨论", text: $draft) {
+                CommunitySearchField(prompt: String(localized: "搜索讨论"), text: $draft) {
                     let q = draft.trimmingCharacters(in: .whitespaces)
                     query = Query(forum: query.forum, page: 1, search: q)
                 }
@@ -66,7 +66,7 @@ struct DiscussionsList: View {
     @ViewBuilder private func list(_ listing: CommunityParsers.ForumListing) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if listing.topics.isEmpty {
-                CommunityNote(text: query.search.isEmpty ? "这个论坛还没有主题。" : "没有找到相关讨论。")
+                CommunityNote(text: query.search.isEmpty ? String(localized: "这个论坛还没有主题。") : String(localized: "没有找到相关讨论。"))
             }
             ForEach(Array(listing.topics.enumerated()), id: \.element.id) { index, topic in
                 if index > 0 { Divider().overlay(Theme.hairline) }
@@ -86,7 +86,7 @@ struct DiscussionsList: View {
                     if topic.locked { Text("已锁定").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.tertiary) }
                     Text(topic.title).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.text).lineLimit(2).multilineTextAlignment(.leading)
                 }
-                MetaLine(parts: [topic.author, topic.lastPost.map { "最后回复 \(CommunityTime.string($0))" } ?? ""], size: 11.5)
+                MetaLine(parts: [topic.author, topic.lastPost.map { String(localized: "最后回复 \(CommunityTime.string($0))") } ?? ""], size: 11.5)
             }
             Spacer(minLength: 12)
             Text("\(topic.replies) 回复").font(.system(size: 12)).foregroundStyle(Theme.secondary).monospacedDigit()
@@ -111,10 +111,10 @@ struct DiscussionThreadView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(thread.title).font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.text)
                         .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                    MetaLine(parts: [thread.forumName, "\(thread.total) 条回复"], size: 12)
+                    MetaLine(parts: [thread.forumName, String(localized: "\(thread.total) 条回复")], size: 12)
                 }
                 .padding(.bottom, 18)
-                if page == 1, let op = thread.opening { post(op, number: "楼主") }
+                if page == 1, let op = thread.opening { post(op, number: String(localized: "楼主")) }
                 ForEach(thread.replies) { reply in post(reply, number: reply.number ?? "") }
                 if thread.pageCount > 1 {
                     CommunityPager(page: thread.page, pageCount: thread.pageCount) { page = $0 }.padding(.top, 14)
@@ -174,7 +174,7 @@ struct DiscussionsView: View {
     }
 
     var body: some View {
-        CommunityFrame(title: detail == nil ? "讨论" : nil, back: detail == nil ? "返回" : "讨论列表", open: open,
+        CommunityFrame(title: detail == nil ? String(localized: "讨论") : nil, back: detail == nil ? String(localized: "返回") : String(localized: "讨论列表"), open: open,
                        onBack: { if detail == nil { onClose() } else { detail = nil } }) {
             if case .thread(let url) = detail {
                 DiscussionThreadView(appid: appid, url: url, open: open)

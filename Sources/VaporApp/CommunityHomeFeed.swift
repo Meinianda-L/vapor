@@ -68,9 +68,9 @@ struct CommunityHomeFeed: View {
                     CommunityChips(items: HomeContent.allCases.map { ($0, $0.title) }, selection: $filter.content)
                     Spacer(minLength: 16)
                     if signedIn {
-                        CommunityChips(items: [(false, "热门内容"), (true, "我的游戏")], selection: $filter.mine)
+                        CommunityChips(items: [(false, String(localized: "热门内容")), (true, String(localized: "我的游戏"))], selection: $filter.mine)
                     }
-                    CommunityChips(items: [(false, "最热门"), (true, "最新")], selection: $filter.recent)
+                    CommunityChips(items: [(false, String(localized: "最热门")), (true, String(localized: "最新"))], selection: $filter.recent)
                 }
                 content
             }
@@ -84,7 +84,7 @@ struct CommunityHomeFeed: View {
         if feed.cards.isEmpty {
             if feed.failed { CommunityFailure { feed.reload(filter) } }
             else if feed.loading { CommunitySkeleton(rows: 8) }
-            else { CommunityNote(text: "没有找到内容。") }
+            else { CommunityNote(text: String(localized: "没有找到内容。")) }
         } else {
             CommunityMasonry {
                 ForEach(feed.cards) { card in HomeCardView(card: card, open: open) }
@@ -98,7 +98,7 @@ struct CommunityHomeFeed: View {
         let games = recentGames
         if !games.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                SectionLabel(text: "最近玩过")
+                SectionLabel(text: String(localized: "最近玩过"))
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 14) {
                         ForEach(games) { g in
@@ -134,12 +134,12 @@ struct HomeCardView: View {
 
     private var kindLabel: String {
         switch card.kind {
-        case .screenshot: return "截图"
-        case .artwork: return "艺术作品"
-        case .workshop: return "创意工坊"
-        case .guide: return "指南"
-        case .video: return "视频"
-        case .broadcast: return "直播"
+        case .screenshot: return String(localized: "截图")
+        case .artwork: return String(localized: "艺术作品")
+        case .workshop: return String(localized: "创意工坊")
+        case .guide: return String(localized: "指南")
+        case .video: return String(localized: "视频")
+        case .broadcast: return String(localized: "直播")
         }
     }
 

@@ -11,7 +11,7 @@ struct CommunityActivityTab: View {
         if let id = engine.account?.steamID {
             Loadable(id: id, rows: 8, load: loader(id)) { events in
                 if events.isEmpty {
-                    CommunityNote(text: "还没有好友动态。")
+                    CommunityNote(text: String(localized: "还没有好友动态。"))
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(events.enumerated()), id: \.element.id) { i, e in
@@ -24,7 +24,7 @@ struct CommunityActivityTab: View {
                 }
             }
         } else {
-            CommunityNote(text: "登录 Steam 后可以看到好友动态。")
+            CommunityNote(text: String(localized: "登录 Steam 后可以看到好友动态。"))
         }
     }
 

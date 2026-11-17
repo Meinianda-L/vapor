@@ -44,8 +44,8 @@ final class DownloadSignals {
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
-            content.title = "下载完成"
-            content.body = "\(name) 已可以开始游戏。"
+            content.title = String(localized: "下载完成")
+            content.body = String(localized: "\(name) 已可以开始游戏。")
             content.sound = .default
             center.add(UNNotificationRequest(identifier: "download-\(name)", content: content, trigger: nil))
         }

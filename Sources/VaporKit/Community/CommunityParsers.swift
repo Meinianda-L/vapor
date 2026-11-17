@@ -329,6 +329,7 @@ public enum CommunityParsers {
         public var stats: [Stat]
         public var tags: [String]
         public var coAuthors: String
+        public var commentThread: CommentThread?
     }
 
     public static func sharedFile(html: String) -> SharedFile? {
@@ -399,6 +400,7 @@ public enum CommunityParsers {
             file.description = root.first(class: "workshopItemDescription").map { RichText.blocks(node: $0, base: base) } ?? []
             if file.description.isEmpty, let d = root.first(class: "screenshotDescription") { file.description = RichText.blocks(node: d, base: base) }
         }
+        file.commentThread = CommentParsers.thread(html: html)
         return file
     }
 }

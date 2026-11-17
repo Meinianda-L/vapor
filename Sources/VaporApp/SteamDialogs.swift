@@ -101,7 +101,7 @@ struct SteamDialogSheet: View {
             VStack(alignment: .leading, spacing: 18) {
                 ForEach(dialog.eulas ?? []) { e in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(e.title ?? engine.strings("EulaDialog_Header") ?? "最终用户许可协议").font(.system(size: 14, weight: .semibold))
+                        Text(e.title ?? engine.strings("EulaDialog_Header") ?? String(localized: "最终用户许可协议")).font(.system(size: 14, weight: .semibold))
                         if let text = rendered[e.id] {
                             Text(text).font(.system(size: 12)).textSelection(.enabled)
                         } else if e.content != nil {
@@ -149,8 +149,8 @@ struct SteamDialogSheet: View {
     @ViewBuilder private var cloudTimes: some View {
         if dialog.localTime > 0 || dialog.remoteTime > 0 {
             VStack(alignment: .leading, spacing: 6) {
-                timeRow(engine.strings("CloudConflict_KeepLocal") ?? "本地存档", dialog.localTime)
-                timeRow(engine.strings("CloudConflict_KeepRemote") ?? "云存档", dialog.remoteTime)
+                timeRow(engine.strings("CloudConflict_KeepLocal") ?? String(localized: "本地存档"), dialog.localTime)
+                timeRow(engine.strings("CloudConflict_KeepRemote") ?? String(localized: "云存档"), dialog.remoteTime)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -217,12 +217,12 @@ struct SteamDialogSheet: View {
             Spacer()
             if dialog.kind == "launchOption" {
                 if let cancel = dialog.cancelChoice { choiceButton(cancel) }
-                Button(engine.strings("GameAction_Play") ?? "开始游戏") {
+                Button(engine.strings("GameAction_Play") ?? String(localized: "开始游戏")) {
                     engine.answerDialog(option ?? launchChoices.first?.id ?? SteamUI.Dialog.dismiss, remember: remember)
                 }
                 .keyboardShortcut(.defaultAction)
             } else if dialog.buttons.isEmpty {
-                Button(engine.strings("Button_Close") ?? "关闭") { engine.answerDialog(SteamUI.Dialog.dismiss) }
+                Button(engine.strings("Button_Close") ?? String(localized: "关闭")) { engine.answerDialog(SteamUI.Dialog.dismiss) }
                     .keyboardShortcut(.cancelAction)
             } else {
                 // Cancel first, the way macOS orders a sheet's buttons; Steam lists it last.
@@ -232,7 +232,7 @@ struct SteamDialogSheet: View {
     }
 
     private func label(_ c: SteamUI.Dialog.Choice) -> String {
-        dialog.kind == "microtxn" && c.id == "authorize" ? "授权" : engine.say(c.label)
+        dialog.kind == "microtxn" && c.id == "authorize" ? String(localized: "授权") : engine.say(c.label)
     }
 
     @ViewBuilder private func choiceButton(_ c: SteamUI.Dialog.Choice) -> some View {
@@ -273,10 +273,10 @@ struct LaunchStatusView: View {
             }
             Spacer(minLength: 12)
             if l.task == "ProcessingShaderCache" || l.request == "ProcessingShaderCache" {
-                Button(engine.strings("LaunchApp_Action_SkipProcessingShaderCache") ?? "跳过") { engine.skipShaders(l) }
+                Button(engine.strings("LaunchApp_Action_SkipProcessingShaderCache") ?? String(localized: "跳过")) { engine.skipShaders(l) }
                     .controlSize(.small)
             }
-            Button(engine.strings("GameAction_Cancel") ?? "取消") { engine.cancelLaunch(l) }
+            Button(engine.strings("GameAction_Cancel") ?? String(localized: "取消")) { engine.cancelLaunch(l) }
                 .controlSize(.small)
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
@@ -289,11 +289,11 @@ struct LaunchStatusView: View {
         let percent = l.fraction.map { String(Int($0 * 100)) } ?? "0"
         switch l.task {
         case "RunningInstallScript" where l.details.isEmpty:
-            return engine.strings("LaunchApp_Action_RunningInstallScript_NoParens") ?? "正在运行安装脚本…"
+            return engine.strings("LaunchApp_Action_RunningInstallScript_NoParens") ?? String(localized: "正在运行安装脚本…")
         case "RunningInstallScript":
-            return engine.strings("LaunchApp_Action_RunningInstallScript", l.details) ?? "正在运行安装脚本…"
+            return engine.strings("LaunchApp_Action_RunningInstallScript", l.details) ?? String(localized: "正在运行安装脚本…")
         default:
-            return engine.strings("LaunchApp_Action_\(l.task)", percent) ?? engine.strings("LaunchApp_Action_Starting") ?? "正在开始启动…"
+            return engine.strings("LaunchApp_Action_\(l.task)", percent) ?? engine.strings("LaunchApp_Action_Starting") ?? String(localized: "正在开始启动…")
         }
     }
 }
