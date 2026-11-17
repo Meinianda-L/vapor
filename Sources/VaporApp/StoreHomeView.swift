@@ -406,7 +406,7 @@ struct StoreBrowseView: View {
                     Menu {
                         ForEach(sorts, id: \.0) { s in Button(s.1) { sort = s.0; page = 0 } }
                     } label: {
-                        Text(String(localized: "排序：\(sorts.first { $0.0 == sort }?.1 ?? ")")").font(.system(size: 12.5))
+                        Text("排序：\(sorts.first { $0.0 == sort }?.1 ?? "")").font(.system(size: 12.5))
                     }
                     .menuStyle(.borderlessButton).fixedSize()
                 }

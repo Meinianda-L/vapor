@@ -348,7 +348,7 @@ struct RuntimesView: View {
         }
         .onChange(of: engine.steam?.engine) { _, new in model.inUse = new }
         .onDisappear { model.stop() }
-        .confirmationDialog(String(localized: "删除 \(deleting?.name ?? ")")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+        .confirmationDialog("删除 \(deleting?.name ?? "")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                             presenting: deleting) { e in
             Button(String(localized: "删除"), role: .destructive) { model.delete(e) }
         } message: { _ in

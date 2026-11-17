@@ -24,7 +24,7 @@ struct UninstallSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(String(localized: "卸载 \(names.joined(separator: ")、"))").font(.system(size: 15, weight: .semibold))
+            Text("卸载 \(names.joined(separator: "、"))").font(.system(size: 15, weight: .semibold))
             Text(String(localized: "会删除本地游戏文件") + (size.map { "（\(bytes($0))）" } ?? "") + String(localized: "。开启了 Steam 云的存档不受影响，之后可以随时重新安装。"))
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.secondary)

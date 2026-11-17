@@ -80,7 +80,7 @@ struct PropertiesSheet: View {
         .background(Theme.background)
         .task { await load() }
         .onDisappear { commitLaunchOptions() }
-        .confirmationDialog(String(localized: "卸载 \(details?.name ?? ")")？", isPresented: $confirmUninstall) {
+        .confirmationDialog("卸载 \(details?.name ?? "")？", isPresented: $confirmUninstall) {
             Button(String(localized: "卸载"), role: .destructive) { engine.uninstall(appid); dismiss() }
         } message: { Text(String(localized: "会删除本地游戏文件。开启了 Steam 云的存档不受影响。")) }
     }
