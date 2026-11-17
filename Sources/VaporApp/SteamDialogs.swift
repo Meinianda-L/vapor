@@ -18,6 +18,12 @@ private struct SteamDialogsModifier: ViewModifier {
         })) { dialog in
             SteamDialogSheet(dialog: dialog).environmentObject(engine)
         }
+        // Steam's native Win32 message boxes (NativeWindowSheet.swift).
+        .sheet(item: Binding(get: { engine.nativeDialog }, set: { shown in
+            if shown == nil, let w = engine.nativeDialog { engine.dismissNative(w) }
+        })) { window in
+            NativeWindowSheet(window: window).environmentObject(engine)
+        }
     }
 }
 

@@ -5,6 +5,7 @@ import VaporKit
 //   vapor libraries                 list Steam installs and installed apps
 //   vapor profile <appid>           full profile for one installed game
 //   vapor scan                      one-line profile for every installed Windows game
+//   vapor engine windows            Steam's native Win32 windows (message boxes, update progress)
 //   vapor wine …                    engines, renderer packs, variants, prefix setup (WineCommand.swift)
 // Options: --prefix <wine prefix>   add a Windows Steam inside that prefix (repeatable)
 
@@ -116,6 +117,19 @@ case "engine":
             guard let raw = info?[id], let m = AppMetadata(appid: id, info: raw), m.type.lowercased() == "game" else { continue }
             print("\(id)\t\(installed.contains(id) ? "installed" : "-        ")\t\(m.osList.joined(separator: ","))\t\(m.name)")
         }
+    case "windows":
+        // Steam's native Win32 windows as vapor-winwatch.exe reads them, until interrupted.
+        ws.windows.observe { list in
+            print("— \(list.count) window(s)")
+            for w in list {
+                let buttons = w.buttons.map { "[\($0.label)]" }.joined(separator: " ")
+                let progress = w.progress?.fraction.map { " \(Int($0 * 100))%" } ?? ""
+                print("  \(w.hwnd) \(w.process) \(w.windowClass) “\(w.title)” \(w.texts.joined(separator: " / ")) \(buttons)\(progress)")
+            }
+        }
+        ws.windows.start()
+        guard ws.windows.isRunning else { print("vapor-winwatch.exe not found; run Shim/build.sh"); exit(1) }
+        dispatchMain()
     case "progress":
         guard args.count > 2, let id = UInt32(args[2]) else { print("usage: vapor engine progress <appid>"); exit(2) }
         if let p = ws.progress(id) {

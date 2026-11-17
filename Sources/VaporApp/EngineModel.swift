@@ -109,6 +109,7 @@ final class EngineModel: ObservableObject {
 
     var statusText: String {
         guard steam != nil else { return "未找到 Windows Steam" }
+        if let status = nativeStatus { return status }
         if stopping { return strings("Steam_Shutdown_Generic") ?? "正在关闭 Steam…" }
         switch connection {
         case .stopped: return "Windows Steam 未运行"
@@ -143,6 +144,7 @@ final class EngineModel: ObservableObject {
             }.value
             if n != nativeSteamRunning { nativeSteamRunning = n }
             if c != connection { connection = c }
+            watchNativeWindows(c)
             if p != progress { progress = p }
             // Signed out, Steam's UI runtime still runs (it hosts the login); keep the channel for Vapor's sign-in.
             let reachable = steam.isRunning || isOnline ? (ui.isConnected ? true : await ui.connect()) : false
@@ -284,6 +286,55 @@ final class EngineModel: ObservableObject {
         }
     }
     func setDownloadsPaused(_ paused: Bool) { uiAction { try await $0.setDownloadsEnabled(!paused) } }
+
+    // MARK: - Native Win32 windows
+
+    /// Steam's own Win32 windows (steam.exe message boxes, update progress, wineboot); they never reach the
+    /// screen (Shim/steamhide.m), so status windows become `statusText` and the others `nativeDialog`.
+    @Published private(set) var nativeWindows: [NativeWindow] = []
+    /// Pressed here but maybe not yet reported gone by the helper.
+    private var answeredNativeWindows: Set<Int> = []
+    private weak var watchedSteam: WindowsSteam?
+
+    /// The native window asking something now; SteamDialogs presents it.
+    var nativeDialog: NativeWindow? { nativeWindows.first { !$0.isStatus && !answeredNativeWindows.contains($0.id) } }
+    /// E.g. "正在更新 Steam… 42%" while the bootstrapper's window is up.
+    var nativeStatus: String? { nativeWindows.first(where: \.isStatus)?.statusLine }
+
+    func press(_ button: NativeWindow.Button, in window: NativeWindow) {
+        guard let steam, nativeWindows.contains(where: { $0.id == window.id }) else { return }
+        answeredNativeWindows.insert(window.id)
+        objectWillChange.send()
+        steam.windows.press(button)
+    }
+
+    /// Closed without a button: what the window's Cancel (or its close box) would do.
+    func dismissNative(_ window: NativeWindow) {
+        guard let steam, nativeWindows.contains(where: { $0.id == window.id }) else { return }
+        answeredNativeWindows.insert(window.id)
+        objectWillChange.send()
+        if let cancel = window.cancelButton { steam.windows.press(cancel) } else { steam.windows.close(window) }
+    }
+
+    /// Keeps vapor-winwatch running while the client runs, including a client an earlier Vapor started.
+    private func watchNativeWindows(_ connection: WindowsSteam.Connection) {
+        guard let steam else { return }
+        if watchedSteam !== steam {
+            watchedSteam = steam
+            steam.windows.observe { [weak self] list in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.answeredNativeWindows.formIntersection(list.map(\.id))
+                    if list != self.nativeWindows { self.nativeWindows = list }
+                }
+            }
+        }
+        switch connection {
+        case .stopped: steam.windows.stop()
+        case .needsLogin: break   // running or not; start() and stop() cover both ends
+        case .starting, .loggedOn, .loggedOff: steam.windows.start()
+        }
+    }
 
     /// Starts headless; shows the login window only when no saved login exists.
     func start() {

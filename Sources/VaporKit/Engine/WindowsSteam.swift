@@ -22,6 +22,9 @@ public final class WindowsSteam: @unchecked Sendable {
     public var install: SteamInstall { .wine(prefix: prefix) }
     public var steamRoot: URL { install.root }
     public var logURL: URL
+    /// The client's native Win32 windows (message boxes, update progress), read in the prefix; they never
+    /// reach the Mac screen (see Shim/steamhide.m).
+    public let windows: NativeWindows
 
     public init(prefix: URL, engine: URL) {
         self.prefix = prefix
@@ -29,6 +32,9 @@ public final class WindowsSteam: @unchecked Sendable {
         let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Vapor")
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         self.logURL = logs.appendingPathComponent("windows-steam.log")
+        self.windows = NativeWindows(wine: engine.appendingPathComponent("bin/wine"),
+                                     environment: Self.environment(prefix: prefix),
+                                     helper: Self.vaporLibrary(NativeWindows.helperName), log: logURL)
     }
 
     /// The engine and prefix chosen in Vapor's config, each falling back to Heroic's Steam prefix and
@@ -56,7 +62,9 @@ public final class WindowsSteam: @unchecked Sendable {
 
     // MARK: - Environment
 
-    public var wineEnvironment: [String: String] {
+    public var wineEnvironment: [String: String] { Self.environment(prefix: prefix) }
+
+    static func environment(prefix: URL) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         for k in ["DYLD_INSERT_LIBRARIES", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "STEAM_DYLD_INSERT_LIBRARIES"] {
             env.removeValue(forKey: k)
@@ -201,7 +209,7 @@ public final class WindowsSteam: @unchecked Sendable {
     /// Starts the client. `silent` hides it entirely; pass false for the one-time login window.
     public func start(silent: Bool = true, allowNativeConflict: Bool = false) throws {
         if !allowNativeConflict && Self.nativeSteamRunning { throw StartError.nativeSteamRunning }
-        if isRunning { return }
+        if isRunning { windows.start(); return }
         updatePrefixQuietly()
         suppressCrashDialogs()
         launch = (Date(), silent)
@@ -216,15 +224,42 @@ public final class WindowsSteam: @unchecked Sendable {
         var env: [String: String] = [:]
         if let shim = Self.steamHideShim { env["DYLD_INSERT_LIBRARIES"] = shim.path }
         try spawn(args, env: env)
+        windows.start()
     }
 
-    /// Keeps Steam's processes out of the Dock (Vapor/Shim/steamhide.m); installed by bundle.sh.
-    public static var steamHideShim: URL? {
-        let candidates = [Bundle.main.resourceURL?.appendingPathComponent("libvapor-steamhide.dylib"),
-                          FileManager.default.homeDirectoryForCurrentUser
-                              .appendingPathComponent("Library/Application Support/Vapor/lib/libvapor-steamhide.dylib")]
-        return candidates.compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) }
+    /// Keeps Steam's processes out of the Dock and their windows off the screen (Vapor/Shim/steamhide.m).
+    public static var steamHideShim: URL? { vaporLibrary("libvapor-steamhide.dylib") }
+
+    /// A file Shim/build.sh builds: in the app's Resources (bundle.sh), in the package's build/lib for
+    /// `swift build` products, or installed under Application Support.
+    static func vaporLibrary(_ name: String) -> URL? {
+        let fm = FileManager.default
+        var candidates = [Bundle.main.resourceURL?.appendingPathComponent(name)]
+        // .build/<triple>/<config>/VaporApp → the package root holding Package.swift.
+        var dir = Bundle.main.executableURL?.resolvingSymlinksInPath().deletingLastPathComponent()
+        for _ in 0..<5 {
+            guard let d = dir else { break }
+            if fm.fileExists(atPath: d.appendingPathComponent("Package.swift").path) {
+                candidates.append(d.appendingPathComponent("build/lib/\(name)"))
+                break
+            }
+            dir = d.deletingLastPathComponent()
+        }
+        candidates.append(fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Vapor/lib/\(name)"))
+        return candidates.compactMap { $0 }.first { fm.fileExists(atPath: $0.path) }
     }
+
+    /// Lets the client's windows onto the screen again (the user asked to see Steam itself); off by default.
+    /// The shim checks this file each time Steam orders a window, so it applies to windows shown from now on.
+    public var showsSteamWindows: Bool {
+        get { FileManager.default.fileExists(atPath: showWindowsFlag.path) }
+        set {
+            if newValue { FileManager.default.createFile(atPath: showWindowsFlag.path, contents: nil) }
+            else { try? FileManager.default.removeItem(at: showWindowsFlag) }
+        }
+    }
+
+    private var showWindowsFlag: URL { prefix.appendingPathComponent(".vapor-show-windows") }
 
     /// Steam's web helper recovers from a crashed process by itself, but Wine would put up its "program
     /// error" dialog for every crash first. Written once per prefix, before anything runs in it.
@@ -252,7 +287,10 @@ public final class WindowsSteam: @unchecked Sendable {
             let dir = engine.appendingPathComponent("share/wine/\(package)")
             if ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).isEmpty { overrides.append("\(dll)=d") }
         }
-        guard let p = try? spawn(["wineboot", "-u"], env: ["WINEDLLOVERRIDES": overrides.joined(separator: ";")]) else { return }
+        var env = ["WINEDLLOVERRIDES": overrides.joined(separator: ";")]
+        // Wine's "updating the configuration" window stays off the screen too.
+        if let shim = Self.steamHideShim { env["DYLD_INSERT_LIBRARIES"] = shim.path }
+        guard let p = try? spawn(["wineboot", "-u"], env: env) else { return }
         let deadline = Date().addingTimeInterval(180)
         while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.5) }
     }
@@ -302,6 +340,8 @@ public final class WindowsSteam: @unchecked Sendable {
     /// Graceful shutdown, then kill what is left. Steam's exit-time cloud sync can take a while on a
     /// slow link. With `keepGames`, a stuck client is killed on its own so a running game survives.
     public func stop(timeout: TimeInterval = 90, keepGames: Bool = false) {
+        // Steam may still put up a box while it shuts down; the helper goes once the client has.
+        defer { if !isRunning { windows.stop() } }
         guard isRunning else { return }
         _ = try? spawn([steamRoot.appendingPathComponent("steam.exe").path, "-shutdown"])
         let deadline = Date().addingTimeInterval(timeout)
