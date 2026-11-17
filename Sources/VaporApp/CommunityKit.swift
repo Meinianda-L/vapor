@@ -392,12 +392,15 @@ enum CommunityDetail: Hashable {
     case file(UInt64)
 }
 
-/// Steam's emoticon images, loaded once per name and size and shared by every message that shows them.
+/// Steam's emoticon and sticker images, loaded once and shared by every message that shows them, plus the
+/// signed-in user's own list for the picker.
 @MainActor
 final class Emoticons: ObservableObject {
     static let shared = Emoticons()
+    @Published private(set) var list: SteamUI.EmoticonList?
     private var images: [String: NSImage] = [:]
     private var loading: Set<String> = []
+    private var listTask: Task<Void, Never>?
 
     private static let base = "https://community.akamai.steamstatic.com/economy/"
 
@@ -406,8 +409,20 @@ final class Emoticons: ObservableObject {
     }
 
     /// The image if it is loaded; otherwise starts the load and returns nil (the caller shows ":name:").
-    func image(_ name: String, large: Bool) -> NSImage? {
-        let key = (large ? "emoticonlarge/" : "emoticon/") + name
+    func image(_ name: String, large: Bool) -> NSImage? { load((large ? "emoticonlarge/" : "emoticon/") + name) }
+
+    func sticker(_ name: String) -> NSImage? { load("sticker/" + name) }
+
+    /// Loads the user's emoticons and stickers once per session (again after a failure).
+    func loadList(_ ui: SteamUI) {
+        guard list == nil, listTask == nil else { return }
+        listTask = Task {
+            list = try? await ui.emoticonList()
+            listTask = nil
+        }
+    }
+
+    private func load(_ key: String) -> NSImage? {
         if let image = images[key] { return image.copy() as? NSImage }
         guard !loading.contains(key), let path = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: Self.base + path) else { return nil }
